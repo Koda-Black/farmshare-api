@@ -1,0 +1,50 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+// output   = "./node_modules/@prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String         @id @default(cuid())
+  email         String         @unique
+  name          String?
+  password      String
+  googleId      String?        @unique
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  subscriptions Subscription[]
+}
+
+model Pool {
+  id          String         @id @default(cuid())
+  name        String
+  price       Float
+  totalSlots  Int
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  subscriptions Subscription[]
+}
+
+model Subscription {
+  id        String   @id @default(cuid())
+  poolId    String
+  userId    String
+  slots     Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  pool Pool @relation(fields: [poolId], references: [id])
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([poolId, userId]) // Ensures a user has only one subscription entry per pool
+}
