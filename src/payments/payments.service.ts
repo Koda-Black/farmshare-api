@@ -122,6 +122,27 @@ export class PaymentsService {
     return { received: true };
   }
 
+  async handlePaystackWebhook(req: any) {
+    const signature = req.headers['x-paystack-signature'];
+    const secret = process.env.PAYSTACK_SECRET_KEY as string;
+    const crypto = await import('crypto');
+    const computed = crypto
+      .createHmac('sha512', secret)
+      .update(req.body)
+      .digest('hex');
+    if (computed !== signature) {
+      throw new BadRequestException('Invalid Paystack signature');
+    }
+    const body = JSON.parse(req.body.toString());
+    if (body?.event === 'charge.success') {
+      const reference = body?.data?.reference;
+      const res = await this.paystack.verify(reference);
+      const { pendingId } = res.metadata;
+      await this.finalize(pendingId);
+    }
+    return { received: true };
+  }
+
   async finalize(pendingId: string) {
     const pending = await this.prisma.pendingSubscription.findUnique({
       where: { id: pendingId },

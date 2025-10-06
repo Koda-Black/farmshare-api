@@ -34,6 +34,11 @@ export class PaymentsController {
     return this.paymentsService.verifyPaystack(reference);
   }
 
+  @Post('paystack/webhook')
+  async paystackWebhook(@Req() req) {
+    return this.paymentsService.handlePaystackWebhook(req);
+  }
+
   @Post('stripe/webhook')
   async stripeWebhook(
     @Req() req,

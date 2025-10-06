@@ -13,6 +13,7 @@ import { PrismaService } from './services/prisma.service';
 import { HttpExceptionFilter } from './filters/http-exception..filter';
 import * as compression from 'compression';
 import * as express from 'express'; // <-- Use CommonJS style
+import helmet from 'helmet';
 
 const logger = new Logger('Bootstrap');
 
@@ -31,13 +32,30 @@ async function bootstrap() {
     }),
   );
 
+  // Security headers (CSP + other helmet protections)
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        useDefaults: true,
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          imgSrc: ["'self'", 'data:', 'https:', 'http:'],
+          connectSrc: [
+            "'self'",
+            process.env.FRONTEND_URL || '',
+          ].filter(Boolean),
+          frameAncestors: ["'self'"],
+        },
+      },
+      crossOriginEmbedderPolicy: false,
+    }),
+  );
+
   // 3. CORS Configuration
   app.enableCors({
-    origin: [
-      'http://localhost:3000',
-      'http://localhost:3001',
-      'https://farmshare-silk.vercel.app',
-    ],
+    origin: [process.env.FRONTEND_URL || 'http://localhost:3000'],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     exposedHeaders: ['Authorization'], // Added exposed headers
@@ -48,6 +66,12 @@ async function bootstrap() {
   // Stripe webhook needs raw body
   app.use(
     '/payments/stripe/webhook',
+    bodyParser.raw({ type: 'application/json' }),
+  );
+
+  // Paystack webhook needs raw body for HMAC verification
+  app.use(
+    '/payments/paystack/webhook',
     bodyParser.raw({ type: 'application/json' }),
   );
 
