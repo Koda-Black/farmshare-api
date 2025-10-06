@@ -45,6 +45,7 @@ async function bootstrap() {
           connectSrc: [
             "'self'",
             process.env.FRONTEND_URL || '',
+            'http://localhost:4040',
           ].filter(Boolean),
           frameAncestors: ["'self'"],
         },
@@ -55,7 +56,10 @@ async function bootstrap() {
 
   // 3. CORS Configuration
   app.enableCors({
-    origin: [process.env.FRONTEND_URL || 'http://localhost:3000'],
+    origin: [
+      process.env.FRONTEND_URL || 'http://localhost:3000',
+      'http://localhost:4040',
+    ],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     exposedHeaders: ['Authorization'], // Added exposed headers
