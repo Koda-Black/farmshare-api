@@ -1,5 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import * as passport from 'passport';
+import * as bodyParser from 'body-parser';
 import { AppModule } from './app.module';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { Logger, ValidationPipe, BadRequestException } from '@nestjs/common';
@@ -43,6 +44,12 @@ async function bootstrap() {
     credentials: true,
     maxAge: 600,
   });
+
+  // Stripe webhook needs raw body
+  app.use(
+    '/payments/stripe/webhook',
+    bodyParser.raw({ type: 'application/json' }),
+  );
 
   // 4. HTTPS redirect middleware
   app.use(

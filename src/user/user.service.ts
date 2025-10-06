@@ -1,26 +1,42 @@
-import { Injectable } from '@nestjs/common';
-import { CreateUserDto } from './dto/create-user.dto';
-import { UpdateUserDto } from './dto/update-user.dto';
+import { Injectable, Inject } from '@nestjs/common';
+import { PrismaService } from '../services/prisma.service';
+import { UpdateUserDto, PaginationDto } from './dto/update-user.dto';
+import { v2 as cloudinary, UploadApiResponse } from 'cloudinary';
+import { streamUpload } from '../utils/cloudinary.helper';
+import { User } from '@prisma/client';
+import { ApiBearerAuth } from '@nestjs/swagger';
+import { EmailService } from '../email/email.service';
 
 @Injectable()
 export class UserService {
-  create(createUserDto: CreateUserDto) {
-    return 'This action adds a new user';
-  }
+  constructor(
+    private prisma: PrismaService,
+    @Inject('CLOUDINARY') private cloudinaryClient: typeof cloudinary,
+    private emailService: EmailService,
+  ) {}
 
-  findAll() {
-    return `This action returns all user`;
-  }
+  getProfile = (userId: string) =>
+    this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        avatarUrl: true,
+        createdAt: true,
+      },
+    });
 
-  findOne(id: number) {
-    return `This action returns a #${id} user`;
-  }
+  updateProfile = (userId: string, dto: UpdateUserDto) =>
+    this.prisma.user.update({ where: { id: userId }, data: dto });
 
-  update(id: number, updateUserDto: UpdateUserDto) {
-    return `This action updates a #${id} user`;
-  }
+  async uploadAvatar(userId: string, file: Express.Multer.File) {
+    const result = await streamUpload(this.cloudinaryClient, file.buffer);
 
-  remove(id: number) {
-    return `This action removes a #${id} user`;
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { avatarUrl: result.secure_url },
+    });
   }
 }

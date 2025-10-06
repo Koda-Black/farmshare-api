@@ -1,12 +1,8 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
-// output   = "./node_modules/@prisma/client"
 }
 
 datasource db {
@@ -14,37 +10,120 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum Role {
+  USER
+  ADMIN
+  SUPERADMIN
+}
+
+enum PoolStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum PaymentGateway {
+  STRIPE
+  PAYSTACK
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+enum PoolCategory {
+  COW
+  GOAT_MEAT
+  FISH
+  STOCKFISH
+  MILK
+  YAM
+  HONEY_BEANS
+  CRAYFISH
+  IRISH_POTATOES
+  ONIONS
+  SWEET_POTATOES
+  PALM_OIL
+}
+
 model User {
-  id            String         @id @default(cuid())
-  email         String         @unique
+  id            String   @id @default(cuid())
+  email         String   @unique
   name          String?
+  phone         String
   password      String
-  googleId      String?        @unique
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  subscriptions Subscription[]
+  googleId      String?  @unique
+  isVerified    Boolean  @default(false)
+  isAdmin       Boolean  @default(false)
+  role          Role     @default(USER)
+  avatarUrl     String?
+  otp           String?
+  otpExpiry     DateTime?
+  resetToken    String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  pools                   Pool[]
+  subscriptions           Subscription[]
+  pendingSubscriptions    PendingSubscription[]
+  
+  @@index([email, isVerified])
 }
 
 model Pool {
-  id          String         @id @default(cuid())
+  id          String      @id @default(uuid())
   name        String
+  category    PoolCategory                 
+  description String?                
   price       Float
   totalSlots  Int
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
-  subscriptions Subscription[]
+  slotsLeft   Int
+  status      PoolStatus  @default(ACTIVE)
+  adminId     String
+  admin       User        @relation(fields: [adminId], references: [id])
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  subscriptions           Subscription[]
+  pendingSubscriptions    PendingSubscription[]
+  
+  @@index([status, category])
 }
 
 model Subscription {
-  id        String   @id @default(cuid())
-  poolId    String
-  userId    String
-  slots     Int      @default(1)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id            String    @id @default(uuid())
+  userId        String
+  poolId        String
+  slots         Int
+  amountPaid    Float
+  paymentMethod PaymentGateway
+  paymentRef    String
+  deliveryFee   Float     @default(0.0)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
-  pool Pool @relation(fields: [poolId], references: [id])
-  user User @relation(fields: [userId], references: [id])
+  user          User      @relation(fields: [userId], references: [id])
+  pool          Pool      @relation(fields: [poolId], references: [id])
+  
+  @@index([userId, poolId])
+}
 
-  @@unique([poolId, userId]) // Ensures a user has only one subscription entry per pool
+model PendingSubscription {
+  id                String          @id @default(uuid())
+  userId            String
+  poolId            String
+  slots             Int
+  status            PaymentStatus   @default(PENDING)
+  gateway           PaymentGateway
+  stripeSessionId   String?         @unique
+  paystackRef       String?         @unique
+  deliveryFee       Float           @default(0.0) 
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  user              User            @relation(fields: [userId], references: [id])
+  pool              Pool            @relation(fields: [poolId], references: [id])
+  
+  @@index([status, createdAt])
 }

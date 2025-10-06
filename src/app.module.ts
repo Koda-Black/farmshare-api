@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, MiddlewareConsumer, RequestMethod } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { ConfigModule } from '@nestjs/config';
 import envConfiguration, { envValidationSchema } from './config/env.config';
@@ -9,7 +9,11 @@ import { AuthModule } from './auth/auth.module';
 import { UserModule } from './user/user.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { HttpModule } from '@nestjs/axios';
+import { RawBodyMiddleware } from './middleware/raw-body.middleware';
 import { PoolsModule } from './pools/pools.module';
+import { StripeModule } from './stripe/stripe.module';
+import { AdminModule } from './admin/admin.module';
+import { PaymentsModule } from './payments/payments.module';
 
 @Module({
   imports: [
@@ -17,6 +21,7 @@ import { PoolsModule } from './pools/pools.module';
     HttpModule,
     ConfigModule.forRoot({
       isGlobal: true,
+      envFilePath: '.env',
       load: [envConfiguration],
       validationSchema: envValidationSchema,
     }),
@@ -28,13 +33,22 @@ import { PoolsModule } from './pools/pools.module';
         },
       ],
     }),
-    PrismaModule,
     AuthModule,
-    UserModule,
     PoolsModule,
+    PrismaModule,
+    UserModule,
+    StripeModule,
+    AdminModule,
+    PaymentsModule,
     // RedisCacheModule,
   ],
   controllers: [AppController],
   providers: [],
 })
-export class AppModule {}
+export class AppModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer
+      .apply(RawBodyMiddleware)
+      .forRoutes({ path: 'stripe/webhook', method: RequestMethod.POST });
+  }
+}

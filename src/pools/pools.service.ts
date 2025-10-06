@@ -1,31 +1,32 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../services/prisma.service'; // Adjust path if needed
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  Logger,
+} from '@nestjs/common';
+import { PrismaService } from '../services/prisma.service';
 import { CreatePoolDto } from './dto/create-pool.dto';
-import { SubscribeDto } from './dto/subscribe.dto';
+import { UpdatePoolDto } from './dto/update-pool.dto';
 
 @Injectable()
 export class PoolsService {
+  private readonly logger = new Logger(PoolsService.name);
+
   constructor(private prisma: PrismaService) {}
 
-  async create(createPoolDto: CreatePoolDto) {
-    return this.prisma.pool.create({ data: createPoolDto });
+  async create(dto: CreatePoolDto, adminId: string) {
+    return this.prisma.pool.create({
+      data: {
+        ...dto,
+        adminId,
+        slotsLeft: dto.totalSlots,
+      },
+    });
   }
 
   async findAll() {
-    const pools = await this.prisma.pool.findMany({
-      include: {
-        _count: {
-          select: { subscriptions: true },
-        },
-      },
-    });
-
-    return pools.map((pool) => {
-      const subscribedSlots = pool._count.subscriptions;
-      return {
-        ...pool,
-        slotsLeft: pool.totalSlots - subscribedSlots,
-      };
+    return this.prisma.pool.findMany({
+      where: { status: 'ACTIVE' },
     });
   }
 
@@ -34,56 +35,69 @@ export class PoolsService {
       where: { id },
       include: {
         subscriptions: {
-          include: {
-            user: {
-              select: { id: true, name: true, email: true },
-            },
-          },
+          include: { user: true },
         },
       },
     });
 
-    if (!pool) {
-      throw new NotFoundException(`Pool with ID ${id} not found`);
-    }
-
-    const subscribedSlots = pool.subscriptions.reduce(
-      (acc, sub) => acc + sub.slots,
-      0,
-    );
-
-    return {
-      ...pool,
-      slotsLeft: pool.totalSlots - subscribedSlots,
-    };
+    if (!pool) throw new NotFoundException('Pool not found');
+    return pool;
   }
 
-  async subscribe(userId: string, subscribeDto: SubscribeDto) {
-    const { poolId, slots } = subscribeDto;
-
-    const pool = await this.prisma.pool.findUnique({ where: { id: poolId } });
-    if (!pool) {
-      throw new NotFoundException(`Pool with ID ${poolId} not found`);
-    }
-
-    const existingSubscription = await this.prisma.subscription.findUnique({
-      where: { poolId_userId: { poolId, userId } },
+  async update(id: string, dto: UpdatePoolDto) {
+    return this.prisma.pool.update({
+      where: { id },
+      data: dto,
     });
+  }
 
-    if (existingSubscription) {
-      return this.prisma.subscription.update({
-        where: { id: existingSubscription.id },
-        data: { slots: existingSubscription.slots + slots },
-      });
+  async remove(id: string) {
+    return this.prisma.pool.update({
+      where: { id },
+      data: { status: 'INACTIVE' },
+    });
+  }
+
+  async deductSlots(poolId: string, slots: number) {
+    const pool = await this.findOne(poolId);
+    if (pool.slotsLeft < slots) {
+      throw new BadRequestException('Not enough slots available');
     }
 
-    return this.prisma.subscription.create({
+    const updatedPool = await this.prisma.pool.update({
+      where: { id: poolId },
       data: {
-        userId,
-        poolId,
-        slots,
+        slotsLeft: { decrement: slots },
       },
     });
+
+    if (updatedPool.slotsLeft === 0) {
+      await this.autoClonePool(updatedPool.id);
+    }
+
+    return updatedPool;
+  }
+
+  private async autoClonePool(originalPoolId: string) {
+    const original = await this.prisma.pool.findUnique({
+      where: { id: originalPoolId },
+    });
+
+    if (original) {
+      await this.prisma.pool.create({
+        data: {
+          name: original.name,
+          price: original.price,
+          totalSlots: original.totalSlots,
+          slotsLeft: original.totalSlots,
+          category: original.category,
+          description: original.description,
+          adminId: original.adminId,
+          status: 'ACTIVE',
+        },
+      });
+      this.logger.log(`Auto-cloned new pool from ${original.id}`);
+    }
   }
 
   async getUserSubscriptions(userId: string) {

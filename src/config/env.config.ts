@@ -37,6 +37,10 @@ export default () => ({
     secretKey: process.env.PAYSTACK_SECRET_KEY,
     testMode: process.env.PAYSTACK_TEST_MODE === 'true',
   },
+  stripe: {
+    secretKey: process.env.STRIPE_SECRET_KEY,
+    webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
+  },
 });
 
 export const envValidationSchema = Joi.object({
@@ -66,4 +70,6 @@ export const envValidationSchema = Joi.object({
   COINGATE_SANDBOX_MODE: Joi.boolean().default(true),
   PAYSTACK_SECRET_KEY: Joi.string().required(),
   PAYSTACK_TEST_MODE: Joi.boolean().default(true),
+  STRIPE_SECRET_KEY: Joi.string().required(),
+  STRIPE_WEBHOOK_SECRET: Joi.string().required(),
 });

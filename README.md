@@ -23,12 +23,43 @@
 
 ## Description
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+FarmShare API is a NestJS service with Prisma for pools, users, and unified payments (Stripe and Paystack).
+
+### Payments Architecture (Unified)
+
+- Single initiation endpoint `POST /payments/pay` using `InitPaymentDto`.
+- Creates a `PendingSubscription` with `gateway: PaymentGateway` and provider IDs (`stripeSessionId` or `paystackRef`).
+- Success handling:
+  - Stripe: `POST /payments/stripe/webhook` with raw body and signature verification.
+  - Paystack: client calls `POST /payments/paystack/verify?reference=...`.
+- Finalization runs in a transaction: checks slots, decrements, creates `Subscription`, marks pending `SUCCESS`, and auto-clones pool when `slotsLeft` becomes zero.
+
+### Prisma Schema Change
+
+- `Subscription.paymentMethod: string` → `PaymentGateway` enum for consistency.
+
+### Stripe Notes
+
+- SDK `apiVersion` pinned to `2024-06-20`.
+- Webhook signature verified via `StripeService.constructEvent`; route uses raw body parsing.
+
+### Paystack Notes
+
+- Amount sent in kobo; metadata includes `pendingId` for resolution.
+
+## Project setup
 
 ## Project setup
 
 ```bash
 $ yarn install
+```
+
+### Prisma
+
+```bash
+yarn prisma:generate
+yarn prisma:migrate:dev
 ```
 
 ## Compile and run the project
@@ -55,6 +86,12 @@ $ yarn run test:e2e
 
 # test coverage
 $ yarn run test:cov
+
+## Changelog (Key changes)
+- Harmonized Stripe and Paystack into a single payment flow.
+- `Subscription.paymentMethod` now uses `PaymentGateway` enum.
+- Stripe webhook handling fixed (raw body + signature verification).
+- Added unit tests for `PaymentsService` and `UserService`.
 ```
 
 ## Deployment
