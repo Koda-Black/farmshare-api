@@ -11,14 +11,18 @@ datasource db {
 }
 
 enum Role {
-  USER
+  BUYER
+  VENDOR
   ADMIN
-  SUPERADMIN
 }
 
 enum PoolStatus {
-  ACTIVE
-  INACTIVE
+  OPEN
+  FILLED
+  IN_DELIVERY
+  COMPLETED
+  DISPUTED
+  CANCELLED
 }
 
 enum PaymentGateway {
@@ -30,6 +34,59 @@ enum PaymentStatus {
   PENDING
   SUCCESS
   FAILED
+}
+
+enum VerificationStatus {
+  NONE
+  PENDING
+  VERIFIED
+  REJECTED
+  EXPIRED
+}
+
+enum GovtIdType {
+  BVN
+  VOTER
+  DL
+  PASSPORT
+}
+
+enum TransactionStatus {
+  INITIATED
+  SUCCESS
+  FAILED
+  REFUNDED
+}
+
+enum TransactionType {
+  ESCROW_HOLD
+  ESCROW_RELEASE
+  REFUND
+  FEE
+}
+
+enum SlotStatus {
+  PENDING_PAYMENT
+  PAID
+  CONFIRMED
+  CANCELLED
+  REFUNDED
+}
+
+enum NotificationType {
+  VERIFICATION
+  PAYMENT
+  POOL_UPDATE
+  DISPUTE
+  ADMIN
+}
+
+enum NotificationMedium {
+  IN_APP
+  EMAIL
+  SMS
+  PUSH
+  WEBHOOK
 }
 
 enum PoolCategory {
@@ -54,41 +111,72 @@ model User {
   phone         String
   password      String
   googleId      String?  @unique
-  isVerified    Boolean  @default(false)
-  isAdmin       Boolean  @default(false)
-  role          Role     @default(USER)
+  role          Role     @default(BUYER)
   avatarUrl     String?
   otp           String?
   otpExpiry     DateTime?
   resetToken    String?
+  // Verification & vendor fields
+  govtIdType    GovtIdType?
+  govtIdNumber  String?
+  govtIdFiles   String[]
+  bvnVerified   Boolean   @default(false)
+  businessRegistrationNumber String?
+  taxId         String?
+  bankAccountId String?
+  bankVerified  Boolean   @default(false)
+  verificationStatus VerificationStatus @default(NONE)
+  mfaEnabled    Boolean  @default(false)
+  mfaSecret     String?
+  settings      Json?
+  lastActive    DateTime?
+  timezone      String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   pools                   Pool[]
   subscriptions           Subscription[]
   pendingSubscriptions    PendingSubscription[]
+  notifications           Notification[]
+  disputesRaised          Dispute[]        @relation("UserDisputes")
+  adminAuditLogs          AdminAuditLog[]  @relation("AdminLogs")
+  verifications           Verification[]
+  transactions            Transaction[]
+  poolSlots               PoolSlot[]       @relation("BuyerSlots")
   
-  @@index([email, isVerified])
+  @@index([email, verificationStatus])
 }
 
 model Pool {
   id          String      @id @default(uuid())
-  name        String
-  category    PoolCategory                 
-  description String?                
-  price       Float
-  totalSlots  Int
-  slotsLeft   Int
-  status      PoolStatus  @default(ACTIVE)
-  adminId     String
-  admin       User        @relation(fields: [adminId], references: [id])
+  vendorId    String
+  vendor      User        @relation(fields: [vendorId], references: [id])
+  productId   String
+  product     ProductCatalog @relation(fields: [productId], references: [id])
+  priceTotal  Decimal     @db.Decimal(18,2)
+  slotsCount  Int
+  pricePerSlot Decimal    @db.Decimal(18,2)
+  commissionRate Decimal  @default(0.05) @db.Decimal(5,4)
+  allowHomeDelivery Boolean @default(false)
+  homeDeliveryCost Decimal? @db.Decimal(18,2)
+  lockAfterFirstJoin Boolean @default(true)
+  maxSlots    Int?
+  minUnitsConstraint Int?  @default(1)
+  timezone    String?
+  deliveryDeadlineUtc DateTime?
+  filledAt    DateTime?
+  status      PoolStatus  @default(OPEN)
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
 
   subscriptions           Subscription[]
   pendingSubscriptions    PendingSubscription[]
+  slots                   PoolSlot[]
+  escrowEntries           EscrowEntry[]
+  transactions            Transaction[]
+  disputes                Dispute[]
   
-  @@index([status, category])
+  @@index([status, filledAt])
 }
 
 model Subscription {
@@ -96,10 +184,10 @@ model Subscription {
   userId        String
   poolId        String
   slots         Int
-  amountPaid    Float
+  amountPaid    Decimal   @db.Decimal(18,2)
   paymentMethod PaymentGateway
   paymentRef    String
-  deliveryFee   Float     @default(0.0)
+  deliveryFee   Decimal   @default(0.0) @db.Decimal(18,2)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -118,7 +206,7 @@ model PendingSubscription {
   gateway           PaymentGateway
   stripeSessionId   String?         @unique
   paystackRef       String?         @unique
-  deliveryFee       Float           @default(0.0) 
+  deliveryFee       Decimal         @default(0.0) @db.Decimal(18,2)
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 
@@ -126,4 +214,125 @@ model PendingSubscription {
   pool              Pool            @relation(fields: [poolId], references: [id])
   
   @@index([status, createdAt])
+}
+
+model Verification {
+  id          String    @id @default(uuid())
+  userId      String
+  step        String
+  status      VerificationStatus @default(PENDING)
+  details     Json?
+  externalReference String?
+  createdAt   DateTime  @default(now())
+  expiresAt   DateTime?
+
+  user        User      @relation(fields: [userId], references: [id])
+  @@index([userId, status])
+}
+
+model ProductCatalog {
+  id           String   @id @default(uuid())
+  name         String
+  sku          String   @unique
+  unit         String
+  allowedUnits Json?
+  seasonalFlag Boolean  @default(false)
+  description  String?
+  active       Boolean  @default(true)
+  adminManaged Boolean  @default(true)
+
+  pools        Pool[]
+  @@index([active, seasonalFlag])
+}
+
+model PoolSlot {
+  id             String   @id @default(uuid())
+  poolId         String
+  buyerId        String
+  slotsReserved  Int
+  unitCount      Int
+  amountPaid     Decimal  @db.Decimal(18,2)
+  paymentId      String?  @unique
+  status         SlotStatus @default(PENDING_PAYMENT)
+  joinedAt       DateTime @default(now())
+  confirmedAt    DateTime?
+
+  pool           Pool     @relation(fields: [poolId], references: [id])
+  buyer          User     @relation("BuyerSlots", fields: [buyerId], references: [id])
+  transaction    Transaction? @relation("PoolSlotTransaction", fields: [paymentId], references: [id])
+  @@index([poolId, status])
+}
+
+model Transaction {
+  id              String   @id @default(uuid())
+  externalTxnId   String?  @unique
+  userId          String
+  poolId          String?
+  amount          Decimal  @db.Decimal(18,2)
+  fees            Decimal  @default(0.0) @db.Decimal(18,2)
+  status          TransactionStatus @default(INITIATED)
+  type            TransactionType
+  metadata        Json?
+  createdAt       DateTime @default(now())
+
+  user            User     @relation(fields: [userId], references: [id])
+  pool            Pool?    @relation(fields: [poolId], references: [id])
+  poolSlot        PoolSlot? @relation("PoolSlotTransaction")
+}
+
+model EscrowEntry {
+  id              String   @id @default(uuid())
+  poolId          String
+  totalHeld       Decimal  @db.Decimal(18,2)
+  releasedAmount  Decimal  @default(0.0) @db.Decimal(18,2)
+  withheldAmount  Decimal  @default(0.0) @db.Decimal(18,2)
+  withheldReason  String?
+  computations    Json?
+  createdAt       DateTime @default(now())
+
+  pool            Pool     @relation(fields: [poolId], references: [id])
+}
+
+model Dispute {
+  id                 String  @id @default(uuid())
+  poolId             String
+  raisedByUserId     String
+  reason             String
+  evidenceFiles      String[]
+  status             String @default("open")
+  complainantCount   Int    @default(1)
+  resolvedAt         DateTime?
+  resolutionNotes    String?
+  distribution       Json?
+
+  pool               Pool   @relation(fields: [poolId], references: [id])
+  raisedBy           User   @relation("UserDisputes", fields: [raisedByUserId], references: [id])
+  @@index([poolId, status])
+}
+
+model Notification {
+  id           String   @id @default(uuid())
+  userId       String
+  type         NotificationType
+  medium       NotificationMedium
+  payload      Json
+  read         Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  deliveredAt  DateTime?
+
+  user         User     @relation(fields: [userId], references: [id])
+  @@index([userId, type, createdAt])
+}
+
+model AdminAuditLog {
+  id           String   @id @default(uuid())
+  adminId      String
+  action       String
+  targetType   String
+  targetId     String
+  details      Json?
+  createdAt    DateTime @default(now())
+
+  admin        User     @relation("AdminLogs", fields: [adminId], references: [id])
+  @@index([adminId, createdAt])
 }

@@ -39,14 +39,17 @@ export class PaymentsService {
     const { method, userId, poolId, slots, waybillWithin, waybillOutside } =
       opts;
 
-    const pool = await this.prisma.pool.findUnique({ where: { id: poolId } });
+    const pool = await this.prisma.pool.findUnique({
+      where: { id: poolId },
+      include: { product: true },
+    });
     if (!pool) throw new NotFoundException('Pool not found');
 
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
 
     const deliveryFee = waybillWithin ? 5000 : waybillOutside ? 10000 : 0;
-    const total = pool.price * slots + deliveryFee;
+    const total = Number(pool.pricePerSlot) * slots + deliveryFee;
 
     const pending = await this.prisma.pendingSubscription.create({
       data: {
@@ -75,7 +78,7 @@ export class PaymentsService {
         userId,
         pending.id,
         total,
-        pool.name,
+        pool.product?.name || 'FarmShare Pool',
       );
       await this.prisma.pendingSubscription.update({
         where: { id: pending.id },
@@ -101,7 +104,7 @@ export class PaymentsService {
     const { pendingId } = res.metadata;
     const pending = await this.prisma.pendingSubscription.findUnique({
       where: { id: pendingId },
-      include: { pool: true, user: true },
+      include: { pool: { include: { product: true } }, user: true },
     });
 
     if (!pending) throw new NotFoundException('Pending not found');
@@ -130,12 +133,25 @@ export class PaymentsService {
     }
 
     const sub = await this.prisma.$transaction(async (tx) => {
-      // Check slot availability atomically
+      // Check slot availability atomically via aggregate of existing subscriptions
       const pool = await tx.pool.findUnique({
         where: { id: pending.poolId },
       });
 
-      if (!pool || pool.slotsLeft < pending.slots) {
+      if (!pool) {
+        await tx.pendingSubscription.update({
+          where: { id: pendingId },
+          data: { status: PaymentStatus.FAILED },
+        });
+        throw new BadRequestException('Pool not found');
+      }
+
+      const taken = await tx.subscription.aggregate({
+        where: { poolId: pending.poolId },
+        _sum: { slots: true },
+      });
+      const slotsTaken = taken._sum.slots ?? 0;
+      if (slotsTaken + pending.slots > pool.slotsCount) {
         await tx.pendingSubscription.update({
           where: { id: pendingId },
           data: { status: PaymentStatus.FAILED },
@@ -143,24 +159,28 @@ export class PaymentsService {
         throw new BadRequestException('Not enough slots available');
       }
 
-      // Update pool slots
-      const updatedPool = await tx.pool.update({
-        where: { id: pending.poolId },
-        data: { slotsLeft: { decrement: pending.slots } },
-      });
-
       // Create subscription
       const subscription = await tx.subscription.create({
         data: {
           userId: pending.userId,
           poolId: pending.poolId,
           slots: pending.slots,
-          amountPaid: pending.pool.price * pending.slots + pending.deliveryFee,
+          amountPaid:
+            Number(pending.pool.pricePerSlot) * pending.slots +
+            Number(pending.deliveryFee),
           deliveryFee: pending.deliveryFee,
           paymentMethod: pending.gateway,
           paymentRef: pending.stripeSessionId || pending.paystackRef || '',
         },
       });
+
+      // Mark filled if capacity reached
+      if (slotsTaken + pending.slots === pool.slotsCount) {
+        await tx.pool.update({
+          where: { id: pending.poolId },
+          data: { status: 'FILLED', filledAt: new Date() },
+        });
+      }
 
       // Update pending status
       await tx.pendingSubscription.update({
@@ -171,39 +191,24 @@ export class PaymentsService {
       return subscription;
     });
 
-    // Auto-clone pool if slots are exhausted
-    const updatedPool = await this.prisma.pool.findUnique({
-      where: { id: pending.poolId },
-    });
-
-    if (updatedPool && updatedPool.slotsLeft === 0) {
-      await this.prisma.pool.create({
-        data: {
-          name: updatedPool.name,
-          price: updatedPool.price,
-          totalSlots: updatedPool.totalSlots,
-          slotsLeft: updatedPool.totalSlots,
-          category: updatedPool.category,
-          description: updatedPool.description,
-          adminId: updatedPool.adminId,
-          status: 'ACTIVE',
-        },
-      });
-    }
+    // Auto-clone is not supported in the new model; handled by admin/workers if needed
 
     // Send receipts
     const totalAmount =
-      pending.pool.price * pending.slots + pending.deliveryFee;
-    const receiptMessage = `Your FarmShare subscription:\nPool: ${pending.pool.name}\nSlots: ${pending.slots}\nAmount: ₦${totalAmount.toLocaleString()}\nID: ${sub.id}`;
+      Number((pending as any).pool.pricePerSlot) * pending.slots +
+      Number(pending.deliveryFee);
+    const productName =
+      ((pending as any).pool?.product?.name as string) ?? 'Pool';
+    const receiptMessage = `Your FarmShare subscription:\nPool: ${productName}\nSlots: ${pending.slots}\nAmount: ₦${totalAmount.toLocaleString()}\nID: ${sub.id}`;
 
     try {
       await this.email.sendSubscriptionReceipt(
         sub.id,
-        pending.pool.name,
+        productName,
         pending.user.email,
         pending.slots,
-        pending.pool.price * pending.slots,
-        pending.deliveryFee,
+        Number(pending.pool.pricePerSlot) * pending.slots,
+        Number(pending.deliveryFee),
       );
 
       if (pending.user.phone) {

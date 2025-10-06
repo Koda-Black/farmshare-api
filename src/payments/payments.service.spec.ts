@@ -57,7 +57,12 @@ describe('PaymentsService', () => {
   it('initiates Stripe payment', async () => {
     prisma.pool.findUnique = jest
       .fn()
-      .mockResolvedValue({ id: 'pool', name: 'Pool', price: 1000 });
+      .mockResolvedValue({
+        id: 'pool',
+        pricePerSlot: 1000,
+        slotsCount: 10,
+        product: { name: 'Pool' },
+      });
     prisma.user.findUnique = jest
       .fn()
       .mockResolvedValue({ id: 'user', email: 'u@e.com' });
@@ -88,19 +93,22 @@ describe('PaymentsService', () => {
   it('initiates Paystack payment', async () => {
     prisma.pool.findUnique = jest
       .fn()
-      .mockResolvedValue({ id: 'pool', name: 'Pool', price: 2000 });
+      .mockResolvedValue({
+        id: 'pool',
+        pricePerSlot: 2000,
+        slotsCount: 10,
+        product: { name: 'Pool' },
+      });
     prisma.user.findUnique = jest
       .fn()
       .mockResolvedValue({ id: 'user', email: 'u@e.com' });
     prisma.pendingSubscription.create = jest
       .fn()
       .mockResolvedValue({ id: 'pending' });
-    paystack.initialize = jest
-      .fn()
-      .mockResolvedValue({
-        authorization_url: 'https://paystack',
-        reference: 'ref',
-      });
+    paystack.initialize = jest.fn().mockResolvedValue({
+      authorization_url: 'https://paystack',
+      reference: 'ref',
+    });
     prisma.pendingSubscription.update = jest.fn().mockResolvedValue({});
 
     const res = await service.init({
@@ -129,15 +137,20 @@ describe('PaymentsService', () => {
       slots: 1,
       deliveryFee: 0,
       gateway: PaymentGateway.STRIPE,
-      pool: { id: 'pool', name: 'Pool', price: 1000 },
+      pool: {
+        id: 'pool',
+        pricePerSlot: 1000,
+        slotsCount: 10,
+        product: { name: 'Pool' },
+      },
       user: { id: 'user', email: 'u@e.com', phone: '123' },
     });
     prisma.pool.findUnique = jest
       .fn()
-      .mockResolvedValue({ id: 'pool', slotsLeft: 5 });
-    prisma.pool.update = jest
+      .mockResolvedValue({ id: 'pool', slotsCount: 10 });
+    (prisma.subscription as any).aggregate = jest
       .fn()
-      .mockResolvedValue({ id: 'pool', slotsLeft: 4 });
+      .mockResolvedValue({ _sum: { slots: 4 } });
     prisma.subscription.create = jest.fn().mockResolvedValue({ id: 'sub' });
     prisma.pendingSubscription.update = jest.fn().mockResolvedValue({});
     // Simulate transaction returning created subscription
