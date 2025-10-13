@@ -1,5 +1,12 @@
 // src/auth/dto/signup.dto.ts
-import { IsEmail, IsNotEmpty, IsString, MinLength } from 'class-validator';
+import {
+  IsEmail,
+  IsIn,
+  IsOptional,
+  IsNotEmpty,
+  IsString,
+  MinLength,
+} from 'class-validator';
 
 export class SignUpDto {
   @IsEmail()
@@ -12,4 +19,16 @@ export class SignUpDto {
   @IsString()
   @MinLength(8)
   password: string;
+
+  @IsOptional()
+  @IsString()
+  phone?: string;
+
+  @IsOptional()
+  @IsString()
+  confirmPassword?: string;
+
+  @IsOptional()
+  @IsIn(['BUYER', 'VENDOR'])
+  role?: 'BUYER' | 'VENDOR';
 }

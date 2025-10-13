@@ -1,0 +1,18 @@
+{
+  "rest-client.environmentVariables": {
+    "$shared": {
+      "baseUrl": "http://localhost:8282",
+      "contentType": "application/json"
+    },
+    "development": {
+      "baseUrl": "http://localhost:8282",
+      "authToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJjbWdrcDdvOW0wMDAwcTN3ejg0YnZvcmhlIiwiZW1haWwiOiJncm91c2U4NDE2NkBhbWluYXRpbmcuY29tIiwicm9sZSI6IkJVWUVSIiwiaWF0IjoxNzYwMDkyNDA4LCJleHAiOjE3NjAwOTMzMDh9.6nD6V8Vj39EOTL01ZSVKT5obSgWoHfRXcqTgn9gE_pY",
+      "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJjbWdrcDdvOW0wMDAwcTN3ejg0YnZvcmhlIiwiZW1haWwiOiJncm91c2U4NDE2NkBhbWluYXRpbmcuY29tIiwicm9sZSI6IkJVWUVSIiwiaWF0IjoxNzYwMDkyMDA2LCJleHAiOjE3NjA2OTY4MDZ9.HhlTjhlVhEZ74vqACws5PyAiWzeF-RR0jzzBygIO5Tg"
+    },
+    "production": {
+      "baseUrl": "https://api.production.com",
+      "authToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJjbWdrcDdvOW0wMDAwcTN3ejg0YnZvcmhlIiwiZW1haWwiOiJncm91c2U4NDE2NkBhbWluYXRpbmcuY29tIiwicm9sZSI6IkJVWUVSIiwiaWF0IjoxNzYwMDkyNDA4LCJleHAiOjE3NjAwOTMzMDh9.6nD6V8Vj39EOTL01ZSVKT5obSgWoHfRXcqTgn9gE_pY",
+      "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJjbWdrcDdvOW0wMDAwcTN3ejg0YnZvcmhlIiwiZW1haWwiOiJncm91c2U4NDE2NkBhbWluYXRpbmcuY29tIiwicm9sZSI6IkJVWUVSIiwiaWF0IjoxNzYwMDkyMDA2LCJleHAiOjE3NjA2OTY4MDZ9.HhlTjhlVhEZ74vqACws5PyAiWzeF-RR0jzzBygIO5Tg"
+    }
+  }
+}

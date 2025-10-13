@@ -7,10 +7,12 @@ import { JwtGuardStrategy } from './strategies/jwt-auth.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { GoogleOauthGuard } from './guards/google-oauth.guard';
 import { GoogleStrategy } from './strategies/google-oauth.strategy';
-import { EmailModule } from '../email/email.module';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { EmailChannelService } from '../notifications/channels/email.channel';
+
 @Module({
   imports: [
-    EmailModule,
+    NotificationsModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
@@ -30,6 +32,7 @@ import { EmailModule } from '../email/email.module';
     JwtAuthGuard,
     GoogleStrategy,
     GoogleOauthGuard,
+    EmailChannelService,
   ],
 })
 export class AuthModule {}

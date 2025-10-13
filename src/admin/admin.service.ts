@@ -5,22 +5,22 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../services/prisma.service';
 import { ModifyRoleDto, PaginationDto } from './dto/modify-role.dto';
-import { EmailService } from '../email/email.service';
+import { EmailChannelService } from '../notifications/channels/email.channel';
 import { Role } from '@prisma/client';
 
 @Injectable()
 export class AdminService {
   constructor(
     private prisma: PrismaService,
-    private emailService: EmailService,
+    private emailChannel: EmailChannelService,
   ) {}
 
   async elevateSelf(userId: string) {
     const user = await this.prisma.user.update({
       where: { id: userId },
-      data: { isAdmin: true, role: Role.ADMIN as 'ADMIN' },
+      data: { role: Role.ADMIN },
     });
-    await this.emailService.sendRoleChangedEmail(
+    await this.emailChannel.sendRoleChangedEmail(
       user.email,
       user.name,
       user.role,
@@ -37,35 +37,14 @@ export class AdminService {
     const currentRole = target.role;
     const newRole = dto.newRole;
 
-    // Prevent removing last SUPERADMIN
-    const totalSuperAdmins = await this.prisma.user.count({
-      where: { role: 'SUPERADMIN' },
-    });
-    if (
-      totalSuperAdmins === 1 &&
-      currentRole === 'SUPERADMIN' &&
-      newRole !== 'SUPERADMIN'
-    ) {
-      throw new ForbiddenException(
-        'Cannot revoke the only remaining SUPERADMIN',
-      );
-    }
-
-    // Set isAdmin flags
-    let isAdmin = false;
-    if (newRole === 'SUPERADMIN' || newRole === 'ADMIN') {
-      isAdmin = true;
-    }
-
     const updated = await this.prisma.user.update({
       where: { id: dto.userId },
       data: {
-        role: newRole,
-        isAdmin,
+        role: newRole as Role,
       },
     });
 
-    await this.emailService.sendRoleChangedEmail(
+    await this.emailChannel.sendRoleChangedEmail(
       updated.email,
       updated.name,
       updated.role,

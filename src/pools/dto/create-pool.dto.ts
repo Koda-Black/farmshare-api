@@ -1,20 +1,27 @@
-import { IsString, IsNumber, IsEnum, IsNotEmpty } from 'class-validator';
-import { PoolCategory } from '@prisma/client';
+import {
+  IsString,
+  IsNumber,
+  IsBoolean,
+  IsNotEmpty,
+  IsOptional,
+} from 'class-validator';
 
 export class CreatePoolDto {
   @IsString()
   @IsNotEmpty()
-  name: string;
+  productId: string;
 
   @IsNumber()
-  price: number;
+  priceTotal: number;
 
   @IsNumber()
-  totalSlots: number;
+  slotsCount: number;
 
-  @IsEnum(PoolCategory)
-  category: PoolCategory;
+  @IsBoolean()
+  @IsOptional()
+  allowHomeDelivery?: boolean;
 
-  @IsString()
-  description: string;
+  @IsNumber()
+  @IsOptional()
+  homeDeliveryCost?: number;
 }

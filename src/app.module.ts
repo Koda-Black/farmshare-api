@@ -14,6 +14,12 @@ import { PoolsModule } from './pools/pools.module';
 import { StripeModule } from './stripe/stripe.module';
 import { AdminModule } from './admin/admin.module';
 import { PaymentsModule } from './payments/payments.module';
+import { VerificationModule } from './verification/verification.module';
+import { EscrowModule } from './escrow/escrow.module';
+import { DisputesModule } from './disputes/disputes.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { QueueModule } from './queues/queue.module';
+import { CatalogModule } from './catalog/catalog.module';
 
 @Module({
   imports: [
@@ -40,6 +46,12 @@ import { PaymentsModule } from './payments/payments.module';
     StripeModule,
     AdminModule,
     PaymentsModule,
+    VerificationModule,
+    EscrowModule,
+    DisputesModule,
+    NotificationsModule,
+    CatalogModule,
+    QueueModule,
     // RedisCacheModule,
   ],
   controllers: [AppController],

@@ -1,4 +1,4 @@
-import { PrismaClient, Role, PoolCategory } from '@prisma/client';
+import { PrismaClient, Role } from '@prisma/client';
 const prisma = new PrismaClient();
 import * as bcrypt from 'bcrypt';
 
@@ -13,26 +13,24 @@ async function main() {
         name: 'Super Admin User',
         phone: '+2348000000001',
         password: hashedpassword,
-        isAdmin: true,
-        role: Role.SUPERADMIN,
-        isVerified: true,
+        role: Role.ADMIN,
+        verificationStatus: 'VERIFIED',
       },
       {
         email: 'admin@farmshare.com',
         name: 'Admin User',
         phone: '+2348000000000',
         password: hashedpassword,
-        isAdmin: true,
         role: Role.ADMIN,
-        isVerified: true,
+        verificationStatus: 'VERIFIED',
       },
       {
         email: 'user@farmshare.com',
         name: 'Regular User',
         phone: '+2348111111111',
         password: hashedpassword,
-        role: Role.USER,
-        isVerified: true,
+        role: Role.BUYER,
+        verificationStatus: 'VERIFIED',
       },
     ],
   });
@@ -45,63 +43,27 @@ async function main() {
     throw new Error('Admin user not found');
   }
 
-  await prisma.pool.createMany({
-    data: [
-      {
-        name: 'Cow',
-        price: 650000,
-        totalSlots: 1,
-        slotsLeft: 1,
-        category: PoolCategory.COW,
-        description: `1 People to share a cow`,
-        adminId: admin.id,
-      },
-      {
-        name: 'Cow',
-        price: 650000,
-        totalSlots: 3,
-        slotsLeft: 3,
-        category: PoolCategory.COW,
-        description: `3 People to share a cow`,
-        adminId: admin.id,
-      },
-      {
-        name: 'Cow',
-        price: 650000,
-        totalSlots: 6,
-        slotsLeft: 6,
-        category: PoolCategory.COW,
-        description: `6 People to share a cow`,
-        adminId: admin.id,
-      },
-      {
-        name: 'Scunbia Fish',
-        price: 300000,
-        totalSlots: 1,
-        slotsLeft: 1,
-        category: PoolCategory.FISH,
-        description: '1 Person to carry one carton of fish',
-        adminId: admin.id,
-      },
-      {
-        name: 'Scunbia Fish',
-        price: 300000,
-        totalSlots: 3,
-        slotsLeft: 3,
-        category: PoolCategory.FISH,
-        description: '3 People to carry one carton of fish',
-        adminId: admin.id,
-      },
-      {
-        name: 'Scunbia Fish',
-        price: 300000,
-        totalSlots: 6,
-        slotsLeft: 6,
-        category: PoolCategory.FISH,
-        description: '6 People to carry one carton of fish',
-        adminId: admin.id,
-      },
-    ],
+  // Seed minimal catalog and pools per new schema
+  const product = await prisma.productCatalog.create({
+    data: {
+      name: 'Cow',
+      sku: 'COW-001',
+      unit: 'head',
+      active: true,
+      adminManaged: true,
+    },
+  });
+
+  await prisma.pool.create({
+    data: {
+      vendorId: admin.id,
+      productId: product.id,
+      priceTotal: 650000,
+      slotsCount: 3,
+      pricePerSlot: 216666.67,
+      commissionRate: 0.05,
+      allowHomeDelivery: false,
+    },
   });
 }
 
