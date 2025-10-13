@@ -13,6 +13,8 @@ import { UserService } from './user.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
 import {
   ApiBearerAuth,
   ApiOperation,
@@ -21,7 +23,7 @@ import {
 } from '@nestjs/swagger';
 
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('user')
 export class UserController {
   constructor(private userService: UserService) {}
@@ -50,5 +52,12 @@ export class UserController {
   @ApiOperation({ summary: 'Upload avatar image' })
   uploadAvatar(@Req() req, @UploadedFile() file: Express.Multer.File) {
     return this.userService.uploadAvatar(req.user.userId, file);
+  }
+
+  @Roles('vendor')
+  @Get('vendor-dashboard')
+  getVendorDashboard() {
+    // return this.vendorService.getDashboardData();
+    return 'Vendor dashboard';
   }
 }

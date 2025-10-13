@@ -106,12 +106,15 @@ enum PoolCategory {
 
 model User {
   id            String   @id @default(cuid())
+  isAdmin       Boolean  @default(false)
+  isVerified    Boolean  @default(false)
   email         String   @unique
   name          String?
-  phone         String
+  phone         String?
   password      String
   googleId      String?  @unique
   role          Role     @default(BUYER)
+  refreshToken  String?
   avatarUrl     String?
   otp           String?
   otpExpiry     DateTime?
@@ -145,6 +148,17 @@ model User {
   poolSlots               PoolSlot[]       @relation("BuyerSlots")
   
   @@index([email, verificationStatus])
+}
+
+model PendingSignup {
+  id         String   @id @default(uuid())
+  email      String   @unique
+  name       String
+  password   String
+  role       Role
+  otp        String
+  otpExpiry  DateTime
+  createdAt  DateTime @default(now())
 }
 
 model Pool {
@@ -301,6 +315,7 @@ model Dispute {
   evidenceFiles      String[]
   status             String @default("open")
   complainantCount   Int    @default(1)
+  createdAt          DateTime @default(now())
   resolvedAt         DateTime?
   resolutionNotes    String?
   distribution       Json?

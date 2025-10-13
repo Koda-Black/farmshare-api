@@ -14,6 +14,7 @@ import { HttpExceptionFilter } from './filters/http-exception..filter';
 import * as compression from 'compression';
 import * as express from 'express'; // <-- Use CommonJS style
 import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 
 const logger = new Logger('Bootstrap');
 
@@ -45,7 +46,7 @@ async function bootstrap() {
           connectSrc: [
             "'self'",
             process.env.FRONTEND_URL || '',
-            'http://localhost:4040',
+            'http://localhost:3000',
           ].filter(Boolean),
           frameAncestors: ["'self'"],
         },
@@ -66,6 +67,15 @@ async function bootstrap() {
     credentials: true,
     maxAge: 600,
   });
+
+  // Add to webhook routes
+  app.use(
+    '/payments/*/webhook',
+    rateLimit({
+      windowMs: 60000,
+      max: 100,
+    }),
+  );
 
   // Stripe webhook needs raw body
   app.use(
@@ -164,7 +174,7 @@ async function bootstrap() {
   });
 
   // 12. Server startup
-  const PORT = process.env.PORT ?? 5000;
+  const PORT = process.env.PORT ?? 8282;
   await app.listen(PORT);
 
   logger.log(`Server is listening at http://localhost:${PORT}`);

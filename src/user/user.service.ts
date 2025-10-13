@@ -5,14 +5,14 @@ import { v2 as cloudinary, UploadApiResponse } from 'cloudinary';
 import { streamUpload } from '../utils/cloudinary.helper';
 import { User } from '@prisma/client';
 import { ApiBearerAuth } from '@nestjs/swagger';
-import { EmailService } from '../email/email.service';
+import { EmailChannelService } from '../notifications/channels/email.channel';
 
 @Injectable()
 export class UserService {
   constructor(
     private prisma: PrismaService,
     @Inject('CLOUDINARY') private cloudinaryClient: typeof cloudinary,
-    private emailService: EmailService,
+    private emailChannel: EmailChannelService,
   ) {}
 
   getProfile = (userId: string) =>

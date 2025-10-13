@@ -28,14 +28,24 @@ export class AuthController {
     private configService: ConfigService,
   ) {}
 
-  @Post('signup')
-  async signup(@Body() signUpDto: SignUpDto) {
-    return this.authService.signUp(signUpDto);
+  @Post('signup/buyer')
+  async signupBuyer(@Body() signUpDto: SignUpDto) {
+    return this.authService.signUp({ ...signUpDto, role: 'BUYER' });
+  }
+
+  @Post('signup/vendor')
+  async signupVendor(@Body() signUpDto: SignUpDto) {
+    return this.authService.signUp({ ...signUpDto, role: 'VENDOR' });
   }
 
   @Post('verify-otp')
   async verifyOtp(@Body() verifyOtpDto: VerifyOtpDto) {
     return this.authService.verifyOtp(verifyOtpDto);
+  }
+
+  @Post('refresh')
+  refresh(@Body('refreshToken') token: string) {
+    return this.authService.refreshToken(token);
   }
 
   @Post('resend-otp')
@@ -68,9 +78,9 @@ export class AuthController {
     @Req() req: Request & { user: { email: string; name: string } },
     @Res() res: Response,
   ) {
-    const { accessToken } = await this.authService.oAuthLogin(req.user);
+    const tokens = await this.authService.oAuthLogin(req.user as any);
     res.redirect(
-      `${this.configService.get('FRONTEND_URL')}/oauth?token=${accessToken}`,
+      `${process.env.FRONTEND_URL}/oauth?token=${tokens.accessToken}&refresh=${tokens.refreshToken}`,
     );
   }
 
