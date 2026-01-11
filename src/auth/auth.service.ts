@@ -349,7 +349,7 @@ export class AuthService {
     } else if (dbUser.isVerified !== true) {
       await this.prisma.user.update({
         where: { id: dbUser.id },
-        data: { isVerified: true },
+        data: { verificationStatus: 'VERIFIED' },
       });
     }
 

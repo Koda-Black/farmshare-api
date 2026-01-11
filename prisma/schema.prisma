@@ -188,6 +188,17 @@ model PendingSignup {
   createdAt  DateTime @default(now())
 }
 
+model PendingSignup {
+  id         String   @id @default(uuid())
+  email      String   @unique
+  name       String
+  password   String
+  role       Role
+  otp        String
+  otpExpiry  DateTime
+  createdAt  DateTime @default(now())
+}
+
 model Pool {
   id          String      @id @default(uuid())
   vendorId    String
