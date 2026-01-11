@@ -13,7 +13,7 @@
 FROM node:20-alpine AS deps
 
 # Install necessary build tools for native modules
-RUN apk add --no-cache libc6-compat python3 make g++
+RUN apk add --no-cache libc6-compat python3 make g++ openssl
 
 # Enable Corepack for Yarn 4.x support
 RUN corepack enable && corepack prepare yarn@4.9.1 --activate
@@ -23,6 +23,9 @@ WORKDIR /app
 # Copy package files
 COPY package.json yarn.lock .yarnrc.yml ./
 COPY .yarn ./.yarn
+
+# Copy prisma schema (needed for postinstall prisma generate)
+COPY prisma ./prisma
 
 # Install dependencies
 RUN yarn install --immutable
