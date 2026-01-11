@@ -27,8 +27,8 @@ COPY .yarn ./.yarn
 # Copy prisma schema (needed for postinstall prisma generate)
 COPY prisma ./prisma
 
-# Install dependencies
-RUN yarn install --immutable
+# Install dependencies (DATABASE_URL needed for prisma generate in postinstall, doesn't connect)
+RUN DATABASE_URL="postgresql://dummy:dummy@localhost:5432/dummy" yarn install --immutable
 
 # -----------------------------------------------------------------------------
 # Stage 2: Builder
