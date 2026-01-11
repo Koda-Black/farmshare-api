@@ -15,6 +15,9 @@ FROM node:20-alpine AS deps
 # Install necessary build tools for native modules
 RUN apk add --no-cache libc6-compat python3 make g++
 
+# Enable Corepack for Yarn 4.x support
+RUN corepack enable && corepack prepare yarn@4.9.1 --activate
+
 WORKDIR /app
 
 # Copy package files
@@ -29,12 +32,16 @@ RUN yarn install --immutable
 # -----------------------------------------------------------------------------
 FROM node:20-alpine AS builder
 
+# Enable Corepack for Yarn 4.x support
+RUN corepack enable && corepack prepare yarn@4.9.1 --activate
+
 WORKDIR /app
 
 # Copy dependencies from deps stage
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/.yarn ./.yarn
 COPY --from=deps /app/.yarnrc.yml ./
+COPY --from=deps /app/package.json ./
 
 # Copy source code
 COPY . .
@@ -44,9 +51,6 @@ RUN yarn prisma generate
 
 # Build the application
 RUN yarn build
-
-# Remove dev dependencies
-RUN yarn workspaces focus --production
 
 # -----------------------------------------------------------------------------
 # Stage 3: Production Runner
