@@ -15,8 +15,8 @@ export class UserService {
     private emailChannel: EmailChannelService,
   ) {}
 
-  getProfile = (userId: string) =>
-    this.prisma.user.findUnique({
+  getProfile = async (userId: string) => {
+    const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {
         id: true,
@@ -25,8 +25,39 @@ export class UserService {
         role: true,
         avatarUrl: true,
         createdAt: true,
+        isVerified: true,
+        phone: true,
+        businessRegistrationNumber: true,
       },
     });
+
+    if (!user) return null;
+
+    // Fetch business information from verification details
+    const businessVerification = await this.prisma.verification.findFirst({
+      where: {
+        userId,
+        step: 'business_reg',
+        status: 'VERIFIED',
+      },
+      select: {
+        details: true,
+      },
+    });
+
+    // Extract business details from verification
+    const businessDetails = businessVerification?.details as any;
+    const businessName =
+      businessDetails?.companyName || businessDetails?.businessName;
+    const businessAddress =
+      businessDetails?.address || businessDetails?.businessAddress;
+
+    return {
+      ...user,
+      businessName,
+      businessAddress,
+    };
+  };
 
   updateProfile = (userId: string, dto: UpdateUserDto) =>
     this.prisma.user.update({ where: { id: userId }, data: dto });
@@ -38,5 +69,59 @@ export class UserService {
       where: { id: userId },
       data: { avatarUrl: result.secure_url },
     });
+  }
+
+  async getTopVendors(state?: string, limit: number = 10) {
+    // Get verified vendors with their pool statistics
+    const vendors = await this.prisma.user.findMany({
+      where: {
+        role: 'VENDOR',
+        isVerified: true,
+        ...(state && { state }),
+      },
+      select: {
+        id: true,
+        name: true,
+        avatarUrl: true,
+        state: true,
+        city: true,
+        isVerified: true,
+        createdAt: true,
+        _count: {
+          select: {
+            pools: true,
+          },
+        },
+      },
+      orderBy: {
+        pools: {
+          _count: 'desc',
+        },
+      },
+      take: limit,
+    });
+
+    // Get subscription stats for each vendor
+    const vendorsWithStats = await Promise.all(
+      vendors.map(async (vendor) => {
+        // Get total subscriptions for this vendor's pools
+        const subscriptionStats = await this.prisma.subscription.aggregate({
+          where: {
+            pool: {
+              vendorId: vendor.id,
+            },
+          },
+          _count: true,
+        });
+
+        return {
+          ...vendor,
+          poolCount: vendor._count.pools,
+          totalSubscribers: subscriptionStats._count || 0,
+        };
+      }),
+    );
+
+    return vendorsWithStats;
   }
 }

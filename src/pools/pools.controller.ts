@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -13,7 +14,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { PoolsService } from './pools.service';
 import { CreatePoolDto } from './dto/create-pool.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiTags, ApiQuery } from '@nestjs/swagger';
 
 @ApiTags('Pools')
 @Controller('pools')
@@ -22,15 +23,38 @@ export class PoolsController {
 
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.SUPERADMIN, Role.ADMIN)
+  @Roles(Role.ADMIN)
   @Post()
   create(@Req() req, @Body() createPoolDto: CreatePoolDto) {
     return this.poolsService.create(createPoolDto, req.user.userId);
   }
 
   @Get()
-  findAll() {
-    return this.poolsService.findAll();
+  @ApiQuery({
+    name: 'vendorId',
+    required: false,
+    description: 'Filter pools by vendor ID',
+  })
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    description: 'Filter pools by status',
+  })
+  @ApiQuery({
+    name: 'category',
+    required: false,
+    description: 'Filter pools by product category',
+  })
+  findAll(
+    @Query('vendorId') vendorId?: string,
+    @Query('status') status?: string,
+    @Query('category') category?: string,
+  ) {
+    return this.poolsService.findAll({
+      vendorId,
+      status: status as any,
+      category,
+    });
   }
 
   @Get(':id')

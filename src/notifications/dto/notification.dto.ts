@@ -4,6 +4,7 @@ import {
   IsArray,
   IsObject,
   IsOptional,
+  IsBoolean,
 } from 'class-validator';
 import { NotificationType, NotificationMedium } from '@prisma/client';
 
@@ -32,4 +33,32 @@ export class RegisterDeviceDto {
   @IsOptional()
   @IsString()
   deviceType?: string;
+}
+
+export class UpdateNotificationPreferencesDto {
+  @IsOptional()
+  @IsBoolean()
+  email?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  sms?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  push?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  inApp?: boolean;
+
+  @IsOptional()
+  @IsObject()
+  types?: {
+    verification?: boolean;
+    payment?: boolean;
+    poolUpdates?: boolean;
+    disputes?: boolean;
+    admin?: boolean;
+  };
 }

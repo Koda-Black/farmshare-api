@@ -2,6 +2,10 @@ import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { VerificationService } from '../../verification/verification.service';
+import { PaystackVerificationService } from '../../verification/services/paystack-verification.service';
+import { FaceVerificationService } from '../../verification/services/face-verification.service';
+import { DocumentOcrService } from '../../verification/services/document-ocr.service';
+import { CacVerificationService } from '../../verification/services/cac-verification.service';
 import { PrismaService } from '../../services/prisma.service';
 import { EmailChannelService } from '../../notifications/channels/email.channel';
 
@@ -18,6 +22,10 @@ export class VerificationProcessor extends WorkerHost {
 
   constructor(
     private verificationService: VerificationService,
+    private paystackService: PaystackVerificationService,
+    private faceService: FaceVerificationService,
+    private documentOcrService: DocumentOcrService,
+    private cacService: CacVerificationService,
     private prisma: PrismaService,
     private emailChannel: EmailChannelService,
   ) {
@@ -45,8 +53,8 @@ export class VerificationProcessor extends WorkerHost {
             metadata,
           );
 
-        case 'bvn':
-          return await this.processBVNVerification(userId, metadata);
+        case 'nin':
+          return await this.processNINVerification(userId, metadata);
 
         default:
           throw new Error(`Unknown verification step: ${step}`);
@@ -95,16 +103,24 @@ export class VerificationProcessor extends WorkerHost {
       throw new Error('Bank account number and bank code required');
     }
 
-    // Use VerificationService method
-    const result = await this.verificationService.verifyBankAccountWithPaystack(
+    // Use PaystackVerificationService
+    const result = await this.paystackService.verifyBankAccount(
       accountNumber,
       bankCode,
-      userId,
     );
 
-    if (!result.verified) {
-      throw new Error('Bank account verification failed');
+    if (!result.success) {
+      throw new Error(result.message || 'Bank account verification failed');
     }
+
+    // Update user record
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        bankVerified: true,
+        bankAccountId: accountNumber,
+      },
+    });
 
     this.logger.log(`Bank account verified for user: ${userId}`);
 
@@ -115,68 +131,77 @@ export class VerificationProcessor extends WorkerHost {
     verificationId: string,
     metadata?: Record<string, any>,
   ) {
-    const { registrationNumber } = metadata || {};
+    const { registrationNumber, companyName } = metadata || {};
 
     if (!registrationNumber) {
       throw new Error('Business registration number required');
     }
 
-    // Use VerificationService method
-    const verification = await this.prisma.verification.findUnique({
-      where: { id: verificationId },
-    });
-
-    if (!verification) {
-      throw new Error('Verification not found');
-    }
-
-    const result = await this.verificationService.verifyBusinessRegistration(
+    // Use CacVerificationService
+    const result = await this.cacService.verifyBusinessRegistration(
       registrationNumber,
-      verification.userId,
+      companyName,
     );
 
-    if (!result) {
-      throw new Error('Business registration verification failed');
+    if (!result.success) {
+      throw new Error(
+        result.message || 'Business registration verification failed',
+      );
     }
 
+    // Update verification record
     await this.prisma.verification.update({
       where: { id: verificationId },
       data: {
         status: 'VERIFIED',
         details: {
           ...metadata,
+          ...result,
           processedAt: new Date().toISOString(),
-          registrationNumber,
         },
       },
     });
 
+    // Update user record
+    const verification = await this.prisma.verification.findUnique({
+      where: { id: verificationId },
+    });
+
+    if (verification) {
+      await this.prisma.user.update({
+        where: { id: verification.userId },
+        data: {
+          businessRegistrationNumber: registrationNumber,
+        },
+      });
+    }
+
     this.logger.log(`Business registration verified: ${verificationId}`);
 
-    return { status: 'verified', verificationId };
+    return { status: 'verified', verificationId, result };
   }
 
-  private async processBVNVerification(
+  private async processNINVerification(
     userId: string,
     metadata?: Record<string, any>,
   ) {
-    const { bvn } = metadata || {};
+    const { nin } = metadata || {};
 
-    if (!bvn) {
-      throw new Error('BVN required');
+    if (!nin) {
+      throw new Error('NIN required');
     }
 
     // Use VerificationService method
-    const result = await this.verificationService.verifyBVNWithProvider(
-      bvn,
+    const result = await this.verificationService.verifyNINWithProvider(
+      nin,
       userId,
     );
 
     if (!result) {
-      throw new Error('BVN verification failed');
+      throw new Error('NIN verification failed');
     }
 
-    this.logger.log(`BVN verified for user: ${userId}`);
+    this.logger.log(`NIN verified for user: ${userId}`);
 
     return { status: 'verified', userId };
   }

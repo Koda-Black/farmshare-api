@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../services/prisma.service';
 import { EscrowService } from '../escrow/escrow.service';
-import { VerificationStatus, Role, PoolStatus } from '@prisma/client';
+import { VerificationStatus, PoolStatus, Role } from '@prisma/client';
 import { CreatePoolDto } from './dto/create-pool.dto';
 import { UpdatePoolDto } from './dto/update-pool.dto';
 import Decimal from 'decimal.js';
@@ -26,7 +26,7 @@ export class PoolsService {
       where: { id: vendorId },
     });
 
-    if (!vendor || vendor.role !== Role.VENDOR) {
+    if (!vendor || vendor.role !== 'VENDOR') {
       throw new BadRequestException('Only verified vendors can create pools');
     }
 
@@ -106,8 +106,9 @@ export class PoolsService {
 
     if (filters?.status) {
       where.status = filters.status;
-    } else {
-      // Default to showing only OPEN pools
+    } else if (!filters?.vendorId) {
+      // Default to showing only OPEN pools for public listing
+      // But show ALL statuses when filtering by vendorId (for vendor dashboard)
       where.status = PoolStatus.OPEN;
     }
 
@@ -130,6 +131,9 @@ export class PoolsService {
             id: true,
             name: true,
             email: true,
+            bankVerified: true,
+            state: true,
+            city: true,
           },
         },
         subscriptions: {
@@ -143,7 +147,7 @@ export class PoolsService {
       orderBy: { createdAt: 'desc' },
     });
 
-    // Calculate remaining slots for each pool
+    // Calculate remaining slots for each pool and transform to frontend format
     return pools.map((pool) => {
       const takenSlots = pool.subscriptions.reduce(
         (sum, sub) => sum + sub.slots,
@@ -153,7 +157,51 @@ export class PoolsService {
       const fillPercentage = (takenSlots / pool.slotsCount) * 100;
 
       return {
-        ...pool,
+        // Core pool fields
+        id: pool.id,
+        vendorId: pool.vendorId,
+        productId: pool.productId,
+        priceTotal: pool.priceTotal,
+        pricePerSlot: pool.pricePerSlot,
+        slotsCount: pool.slotsCount,
+        commissionRate: pool.commissionRate,
+        allowHomeDelivery: pool.allowHomeDelivery,
+        homeDeliveryCost: pool.homeDeliveryCost,
+        lockAfterFirstJoin: pool.lockAfterFirstJoin,
+        maxSlots: pool.maxSlots,
+        minUnitsConstraint: pool.minUnitsConstraint,
+        timezone: pool.timezone,
+        createdAt: pool.createdAt,
+        updatedAt: pool.updatedAt,
+        filledAt: pool.filledAt,
+        deliveryDeadlineUtc: pool.deliveryDeadlineUtc,
+
+        // Related data
+        product: pool.product,
+        vendor: pool.vendor,
+        subscriptions: pool.subscriptions,
+
+        // Frontend-friendly fields
+        vendor_name: pool.vendor.name,
+        vendor_verified: pool.vendor.bankVerified || false,
+        product_name: pool.product.name,
+        product_description: pool.product.description || '',
+        product_image: pool.product.imageUrl || '/placeholder.svg',
+        slots_count: pool.slotsCount,
+        slots_filled: takenSlots,
+        price_per_slot: Number(pool.pricePerSlot),
+        allow_home_delivery: pool.allowHomeDelivery,
+        home_delivery_cost: pool.homeDeliveryCost
+          ? Number(pool.homeDeliveryCost)
+          : undefined,
+        delivery_deadline:
+          pool.deliveryDeadlineUtc?.toISOString() ||
+          new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+        status: pool.status.toLowerCase(),
+        category: pool.product.category || 'other',
+        pickup_location: pool.vendor.name + ' - Main Warehouse', // Add pickup location
+
+        // Calculated fields
         takenSlots,
         slotsLeft,
         fillPercentage: Math.round(fillPercentage),
@@ -172,6 +220,8 @@ export class PoolsService {
             name: true,
             email: true,
             bankVerified: true,
+            state: true,
+            city: true,
           },
         },
         subscriptions: {
@@ -203,7 +253,52 @@ export class PoolsService {
     const fillPercentage = (takenSlots / pool.slotsCount) * 100;
 
     return {
-      ...pool,
+      // Core pool fields
+      id: pool.id,
+      vendorId: pool.vendorId,
+      productId: pool.productId,
+      priceTotal: pool.priceTotal,
+      pricePerSlot: pool.pricePerSlot,
+      slotsCount: pool.slotsCount,
+      commissionRate: pool.commissionRate,
+      allowHomeDelivery: pool.allowHomeDelivery,
+      homeDeliveryCost: pool.homeDeliveryCost,
+      lockAfterFirstJoin: pool.lockAfterFirstJoin,
+      maxSlots: pool.maxSlots,
+      minUnitsConstraint: pool.minUnitsConstraint,
+      timezone: pool.timezone,
+      createdAt: pool.createdAt,
+      updatedAt: pool.updatedAt,
+      filledAt: pool.filledAt,
+      deliveryDeadlineUtc: pool.deliveryDeadlineUtc,
+
+      // Related data
+      product: pool.product,
+      vendor: pool.vendor,
+      subscriptions: pool.subscriptions,
+      disputes: pool.disputes,
+
+      // Frontend-friendly fields
+      vendor_name: pool.vendor.name,
+      vendor_verified: pool.vendor.bankVerified || false,
+      product_name: pool.product.name,
+      product_description: pool.product.description || '',
+      product_image: pool.product.imageUrl || '/placeholder.svg',
+      slots_count: pool.slotsCount,
+      slots_filled: takenSlots,
+      price_per_slot: Number(pool.pricePerSlot),
+      allow_home_delivery: pool.allowHomeDelivery,
+      home_delivery_cost: pool.homeDeliveryCost
+        ? Number(pool.homeDeliveryCost)
+        : undefined,
+      delivery_deadline:
+        pool.deliveryDeadlineUtc?.toISOString() ||
+        new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      status: pool.status.toLowerCase(),
+      category: pool.product.category || 'other',
+      pickup_location: pool.vendor.name + ' - Main Warehouse', // Add pickup location
+
+      // Calculated fields
       takenSlots,
       slotsLeft,
       fillPercentage: Math.round(fillPercentage),

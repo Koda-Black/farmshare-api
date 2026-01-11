@@ -27,6 +27,14 @@ export class NotificationProcessor extends WorkerHost {
       `Processing notification job: ${job.id} for user ${userId} (${type})`,
     );
 
+    // Validate userId before processing
+    if (!userId) {
+      this.logger.error(
+        `Notification job ${job.id} has undefined userId, skipping`,
+      );
+      return { skipped: true, reason: 'undefined userId' };
+    }
+
     try {
       const result = await this.notificationsService.sendNotification(
         userId,

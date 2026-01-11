@@ -1,5 +1,6 @@
 // src/auth/guards/admin.guard.ts
 import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
+import { Role } from '@prisma/client';
 
 @Injectable()
 export class AdminGuard implements CanActivate {
@@ -7,6 +8,6 @@ export class AdminGuard implements CanActivate {
     const request = context.switchToHttp().getRequest();
     const user = request.user;
 
-    return user?.isAdmin === true || user?.role === 'SUPERADMIN';
+    return user?.isAdmin === true || user?.role === 'ADMIN';
   }
 }

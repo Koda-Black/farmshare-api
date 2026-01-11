@@ -9,6 +9,7 @@ import { GoogleOauthGuard } from './guards/google-oauth.guard';
 import { GoogleStrategy } from './strategies/google-oauth.strategy';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { EmailChannelService } from '../notifications/channels/email.channel';
+import { SecurityService } from '../common/services/security.service';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { EmailChannelService } from '../notifications/channels/email.channel';
     GoogleStrategy,
     GoogleOauthGuard,
     EmailChannelService,
+    SecurityService,
   ],
 })
 export class AuthModule {}

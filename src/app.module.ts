@@ -7,7 +7,6 @@ import { ThrottlerModule } from '@nestjs/throttler';
 // import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
 import { UserModule } from './user/user.module';
-import { ScheduleModule } from '@nestjs/schedule';
 import { HttpModule } from '@nestjs/axios';
 import { RawBodyMiddleware } from './middleware/raw-body.middleware';
 import { PoolsModule } from './pools/pools.module';
@@ -20,10 +19,13 @@ import { DisputesModule } from './disputes/disputes.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { QueueModule } from './queues/queue.module';
 import { CatalogModule } from './catalog/catalog.module';
+import { CommonModule } from './common/common.module';
+import { SupportModule } from './support/support.module';
+import { NewsletterModule } from './newsletter/newsletter.module';
 
 @Module({
   imports: [
-    ScheduleModule.forRoot(),
+    CommonModule, // Global module with SecurityService, ScheduledTasksService
     HttpModule,
     ConfigModule.forRoot({
       isGlobal: true,
@@ -51,7 +53,9 @@ import { CatalogModule } from './catalog/catalog.module';
     DisputesModule,
     NotificationsModule,
     CatalogModule,
+    SupportModule,
     QueueModule,
+    NewsletterModule,
     // RedisCacheModule,
   ],
   controllers: [AppController],

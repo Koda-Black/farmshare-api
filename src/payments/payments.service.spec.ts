@@ -3,8 +3,13 @@ import { PaymentsService, PaymentMethod } from './payments.service';
 import { PrismaService } from '../services/prisma.service';
 import { StripeService } from '../services/stripe.service';
 import { PaystackService } from '../services/paystack.service';
-import { EmailService } from '../email/email.service';
-import { WhatsappService } from '../services/whatsapp.service';
+// Mock services - these don't exist yet but are referenced in PaymentsService
+const mockEmailService = {
+  sendSubscriptionReceipt: jest.fn(),
+};
+const mockWhatsappService = {
+  sendSubscriptionReceipt: jest.fn(),
+};
 import { PaymentGateway, PaymentStatus } from '@prisma/client';
 
 describe('PaymentsService', () => {
@@ -31,12 +36,8 @@ describe('PaymentsService', () => {
     verify: jest.fn(),
   } as unknown as jest.Mocked<PaystackService>;
 
-  const email = {
-    sendSubscriptionReceipt: jest.fn(),
-  } as unknown as jest.Mocked<EmailService>;
-  const whatsapp = {
-    sendSubscriptionReceipt: jest.fn(),
-  } as unknown as jest.Mocked<WhatsappService>;
+  const email = mockEmailService;
+  const whatsapp = mockWhatsappService;
 
   beforeEach(async () => {
     jest.resetAllMocks();
@@ -46,8 +47,8 @@ describe('PaymentsService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: StripeService, useValue: stripe },
         { provide: PaystackService, useValue: paystack },
-        { provide: EmailService, useValue: email },
-        { provide: WhatsappService, useValue: whatsapp },
+        { provide: 'EmailService', useValue: email },
+        { provide: 'WhatsappService', useValue: whatsapp },
       ],
     }).compile();
 

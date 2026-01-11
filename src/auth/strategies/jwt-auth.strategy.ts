@@ -20,7 +20,8 @@ export class JwtGuardStrategy extends PassportStrategy(Strategy) {
 
   validate(payload: any) {
     return {
-      userId: payload.sub,
+      id: payload.sub,
+      userId: payload.sub, // Alias for compatibility
       email: payload.email,
       isAdmin: payload.isAdmin,
       role: payload.role,

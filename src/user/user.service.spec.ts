@@ -1,7 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { UserService } from './user.service';
 import { PrismaService } from '../services/prisma.service';
-import { EmailService } from '../email/email.service';
+// Mock email service - doesn't exist yet but is referenced in UserService
+const mockEmailService = {
+  send: jest.fn(),
+};
 
 describe('UserService', () => {
   let service: UserService;
@@ -12,9 +15,7 @@ describe('UserService', () => {
     },
   } as unknown as jest.Mocked<PrismaService>;
 
-  const email = {
-    send: jest.fn(),
-  } as unknown as jest.Mocked<EmailService>;
+  const email = mockEmailService;
 
   const cloudinary = {} as any;
 
@@ -25,7 +26,7 @@ describe('UserService', () => {
         UserService,
         { provide: PrismaService, useValue: prisma },
         { provide: 'CLOUDINARY', useValue: cloudinary },
-        { provide: EmailService, useValue: email },
+        { provide: 'EmailService', useValue: email },
       ],
     }).compile();
 

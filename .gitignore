@@ -36,11 +36,15 @@ lerna-debug.log*
 !.vscode/extensions.json
 
 # dotenv environment variable files
-.env
+.env*
+.env.production
+.env.test
 .env.development.local
 .env.test.local
 .env.production.local
 .env.local
+.env.example
+sendgrid.env
 
 # temp directory
 .temp
@@ -54,4 +58,5 @@ pids
 
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+sendgrid.env
 sendgrid.env

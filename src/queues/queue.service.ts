@@ -11,6 +11,7 @@ export class QueueService {
     @InjectQueue('verification') private verificationQueue: Queue,
     @InjectQueue('escrow-release') private escrowReleaseQueue: Queue,
     @InjectQueue('notifications') private notificationsQueue: Queue,
+    @InjectQueue('payment-processing') private paymentProcessingQueue: Queue,
   ) {}
 
   // Add verification job
@@ -70,6 +71,81 @@ export class QueueService {
     );
   }
 
+  // Add scheduled escrow releases job (runs every minute to check for pools ready for release)
+  async addScheduledEscrowReleaseJob() {
+    const job = await this.escrowReleaseQueue.add(
+      'process-scheduled-releases',
+      {},
+      {
+        priority: 2,
+        repeat: { pattern: '* * * * *' }, // Every minute (for testing with 5min grace period)
+        attempts: 3,
+        backoff: {
+          type: 'exponential',
+          delay: 5000,
+        },
+      },
+    );
+
+    this.logger.log(`Added scheduled escrow release job: ${job.id}`);
+    return job;
+  }
+
+  // Add manual escrow release job
+  async addManualEscrowReleaseJob(
+    poolId: string,
+    reason?: string,
+    forceRelease = false,
+  ) {
+    const job = await this.escrowReleaseQueue.add(
+      'release-pool-escrow',
+      {
+        poolId,
+        triggerType: 'manual',
+        reason: reason || 'Manual release by admin',
+        forceRelease,
+      },
+      {
+        priority: 1, // High priority for manual releases
+        attempts: 5,
+        backoff: {
+          type: 'exponential',
+          delay: 2000,
+        },
+      },
+    );
+
+    this.logger.log(
+      `Added manual escrow release job: ${job.id} for pool ${poolId}`,
+    );
+    return job;
+  }
+
+  // Add vendor funds release job (release all funds for a vendor)
+  async addVendorFundsReleaseJob(vendorId: string) {
+    const job = await this.escrowReleaseQueue.add(
+      'process-vendor-releases',
+      {
+        vendorId,
+        triggerType: 'manual',
+        reason: 'Release all vendor funds by admin',
+      },
+      {
+        priority: 1, // High priority
+        attempts: 3,
+        backoff: {
+          type: 'exponential',
+          delay: 3000,
+        },
+      },
+    );
+
+    this.logger.log(
+      `Added vendor funds release job: ${job.id} for vendor ${vendorId}`,
+    );
+    return job;
+  }
+
   // Add notification job
   async addNotificationJob(data: {
     userId: string;
@@ -77,6 +153,14 @@ export class QueueService {
     mediums: NotificationMedium[];
     payload: Record<string, any>;
   }) {
+    // Validate userId before adding to queue
+    if (!data.userId) {
+      this.logger.error(
+        `Attempted to add notification job with undefined userId. Type: ${data.type}`,
+      );
+      return null;
+    }
+
     const job = await this.notificationsQueue.add('send-notification', data, {
       priority: 3, // Low priority
       attempts: 3,
@@ -101,8 +185,24 @@ export class QueueService {
       payload: Record<string, any>;
     }>,
   ) {
+    // Filter out notifications with undefined userId
+    const validNotifications = notifications.filter((n) => {
+      if (!n.userId) {
+        this.logger.error(
+          `Skipping bulk notification with undefined userId. Type: ${n.type}`,
+        );
+        return false;
+      }
+      return true;
+    });
+
+    if (validNotifications.length === 0) {
+      this.logger.warn('No valid notifications to add in bulk');
+      return [];
+    }
+
     const jobs = await this.notificationsQueue.addBulk(
-      notifications.map((data) => ({
+      validNotifications.map((data) => ({
         name: 'send-notification',
         data,
         opts: {
@@ -115,9 +215,68 @@ export class QueueService {
     return jobs;
   }
 
+  // Add payment processing job
+  async addPaymentProcessingJob(data: {
+    pendingId: string;
+    paymentMethod: 'STRIPE' | 'PAYSTACK';
+    paymentReference: string;
+    userId: string;
+    poolId: string;
+    amount: number;
+    metadata?: Record<string, any>;
+  }) {
+    const job = await this.paymentProcessingQueue.add('process-payment', data, {
+      priority: 1, // Highest priority - payments are critical
+      attempts: 5, // More attempts for reliability
+      backoff: {
+        type: 'exponential',
+        delay: 2000,
+      },
+      removeOnComplete: {
+        age: 72 * 3600, // Keep for 3 days for audit
+        count: 5000, // Keep more payment jobs
+      },
+      removeOnFail: {
+        age: 30 * 24 * 3600, // Keep for 30 days for debugging
+      },
+    });
+
+    this.logger.log(
+      `Added payment processing job: ${job.id} for pending ${data.pendingId}`,
+    );
+    return job;
+  }
+
+  // Add payment verification job (for handling webhooks)
+  async addPaymentVerificationJob(data: {
+    paymentReference: string;
+    paymentMethod: 'STRIPE' | 'PAYSTACK';
+    pendingId?: string;
+    webhookData?: any;
+  }) {
+    const job = await this.paymentProcessingQueue.add('verify-payment', data, {
+      priority: 1, // Highest priority
+      attempts: 3,
+      backoff: {
+        type: 'exponential',
+        delay: 1000,
+      },
+      delay: 5000, // Wait 5 seconds to allow webhooks to be processed first
+    });
+
+    this.logger.log(
+      `Added payment verification job: ${job.id} for reference ${data.paymentReference}`,
+    );
+    return job;
+  }
+
   // Get job status
   async getJobStatus(
-    queueName: 'verification' | 'escrow-release' | 'notifications',
+    queueName:
+      | 'verification'
+      | 'escrow-release'
+      | 'notifications'
+      | 'payment-processing',
     jobId: string,
   ) {
     const queue =
@@ -125,7 +284,9 @@ export class QueueService {
         ? this.verificationQueue
         : queueName === 'escrow-release'
           ? this.escrowReleaseQueue
-          : this.notificationsQueue;
+          : queueName === 'payment-processing'
+            ? this.paymentProcessingQueue
+            : this.notificationsQueue;
 
     const job = await queue.getJob(jobId);
 
@@ -148,14 +309,20 @@ export class QueueService {
 
   // Get queue stats
   async getQueueStats(
-    queueName: 'verification' | 'escrow-release' | 'notifications',
+    queueName:
+      | 'verification'
+      | 'escrow-release'
+      | 'notifications'
+      | 'payment-processing',
   ) {
     const queue =
       queueName === 'verification'
         ? this.verificationQueue
         : queueName === 'escrow-release'
           ? this.escrowReleaseQueue
-          : this.notificationsQueue;
+          : queueName === 'payment-processing'
+            ? this.paymentProcessingQueue
+            : this.notificationsQueue;
 
     const [waiting, active, completed, failed, delayed] = await Promise.all([
       queue.getWaitingCount(),

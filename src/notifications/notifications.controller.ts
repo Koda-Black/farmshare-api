@@ -14,7 +14,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { Role } from '../constant';
-import { SendNotificationDto, RegisterDeviceDto } from './dto/notification.dto';
+import { SendNotificationDto, RegisterDeviceDto, UpdateNotificationPreferencesDto } from './dto/notification.dto';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 
 @ApiTags('Notifications')
@@ -67,7 +67,7 @@ export class NotificationsController {
   }
 
   @UseGuards(RolesGuard)
-  @Roles(Role.ADMIN, Role.SUPERADMIN)
+  @Roles(Role.ADMIN)
   @Post('send')
   async sendNotification(@Body() dto: SendNotificationDto) {
     return this.notificationsService.sendNotification(
@@ -75,6 +75,22 @@ export class NotificationsController {
       dto.type,
       dto.mediums,
       dto.payload,
+    );
+  }
+
+  @Get('preferences')
+  async getNotificationPreferences(@Req() req) {
+    return this.notificationsService.getNotificationPreferences(req.user.userId);
+  }
+
+  @Patch('preferences')
+  async updateNotificationPreferences(
+    @Body() dto: UpdateNotificationPreferencesDto,
+    @Req() req
+  ) {
+    return this.notificationsService.updateNotificationPreferences(
+      req.user.userId,
+      dto
     );
   }
 }

@@ -11,14 +11,14 @@ import {
 import { Role } from '@prisma/client';
 
 export class ModifyRoleDto {
-  @IsString()
+  @IsUUID()
   @IsNotEmpty()
   userId: string;
 
-  @IsEnum(['USER', 'ADMIN', 'SUPERADMIN'], {
-    message: 'newRole must be USER, ADMIN, or SUPERADMIN',
+  @IsEnum(['BUYER', 'VENDOR', 'ADMIN'], {
+    message: 'newRole must be BUYER, VENDOR, or ADMIN',
   })
-  newRole: 'USER' | 'ADMIN' | 'SUPERADMIN';
+  newRole: 'BUYER' | 'VENDOR' | 'ADMIN';
 }
 
 export class PaginationDto {
