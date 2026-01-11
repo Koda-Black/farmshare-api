@@ -8,6 +8,7 @@ import {
   Res,
   UseGuards,
   Param,
+  Ip,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { SignUpDto } from './dto/signup.dto';
@@ -39,8 +40,8 @@ export class AuthController {
   }
 
   @Post('verify-otp')
-  async verifyOtp(@Body() verifyOtpDto: VerifyOtpDto) {
-    return this.authService.verifyOtp(verifyOtpDto);
+  async verifyOtp(@Body() verifyOtpDto: VerifyOtpDto, @Ip() ipAddress: string) {
+    return this.authService.verifyOtp(verifyOtpDto, ipAddress);
   }
 
   @Post('refresh')

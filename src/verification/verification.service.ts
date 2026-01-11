@@ -14,6 +14,18 @@ import { v2 as cloudinary } from 'cloudinary';
 import { VerificationStatus, GovtIdType } from '@prisma/client';
 import { streamUpload } from '../utils/cloudinary.helper';
 
+// Step name mapping: frontend names -> backend names
+const STEP_NAME_MAP: Record<string, string> = {
+  id: 'govt_id',
+  business: 'business_reg',
+  details: 'tax',
+  // These are already backend names
+  govt_id: 'govt_id',
+  bank: 'bank',
+  business_reg: 'business_reg',
+  tax: 'tax',
+};
+
 @Injectable()
 export class VerificationService {
   private readonly logger = new Logger(VerificationService.name);
@@ -24,6 +36,20 @@ export class VerificationService {
     @Inject('CLOUDINARY') private cloudinaryClient: typeof cloudinary,
   ) {}
 
+  /**
+   * Normalize step names from frontend to backend format
+   */
+  private normalizeStepName(step: string): string {
+    return STEP_NAME_MAP[step] || step;
+  }
+
+  /**
+   * Normalize an array of step names
+   */
+  private normalizeSteps(steps: string[]): string[] {
+    return steps.map((step) => this.normalizeStepName(step));
+  }
+
   async startVerification(userId: string, steps: string[]) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
@@ -33,9 +59,15 @@ export class VerificationService {
       throw new BadRequestException('User is already verified');
     }
 
+    // Normalize step names from frontend to backend format
+    const normalizedSteps = this.normalizeSteps(steps);
+    this.logger.log(
+      `Starting verification with steps: ${normalizedSteps.join(', ')}`,
+    );
+
     // Create verification records for each step
     const verifications = await Promise.all(
-      steps.map((step) =>
+      normalizedSteps.map((step) =>
         this.prisma.verification.create({
           data: {
             userId,
@@ -150,7 +182,7 @@ export class VerificationService {
     if (!verification) return;
 
     // Mock verification logic - in production, integrate with:
-    // - BVN verification API
+    // - NIN verification API
     // - Business registry API
     // - Paystack bank verification
     // - OCR/AI document validation
@@ -164,7 +196,7 @@ export class VerificationService {
         });
         await this.prisma.user.update({
           where: { id: verification.userId },
-          data: { bvnVerified: true },
+          data: { ninVerified: true },
         });
       } else if (verification.step === 'bank') {
         // Integrate with Paystack bank verification
@@ -256,7 +288,7 @@ export class VerificationService {
 
     return {
       overallStatus: user.verificationStatus,
-      bvnVerified: user.bvnVerified,
+      ninVerified: user.ninVerified,
       bankVerified: user.bankVerified,
       verifications: user.verifications.map((v) => ({
         id: v.id,
@@ -335,7 +367,7 @@ export class VerificationService {
   private getRequiredDocuments(step: string): string[] {
     const docs = {
       govt_id: [
-        'Government-issued ID (BVN, Voter Card, Driver License, or Passport)',
+        'Government-issued ID (NIN, Voter Card, Driver License, or Passport)',
         'Clear photo showing full face and ID details',
       ],
       bank: ['Bank account number', 'Bank name', 'Account holder name'],
@@ -350,17 +382,17 @@ export class VerificationService {
 
   // Additional helper methods for production integrations
 
-  async verifyBVNWithProvider(bvn: string, userId: string): Promise<boolean> {
-    // TODO: Integrate with BVN verification provider (Mono, Okra, Verifyghana)
+  async verifyNINWithProvider(nin: string, userId: string): Promise<boolean> {
+    // TODO: Integrate with NIN verification provider (Mono, Okra, Verifyghana)
     // Example implementation:
     /*
       try {
         const response = await axios.post(
-          'https://api.mono.co/v1/identity/bvn/verify',
-          { bvn },
+          'https://api.mono.co/v1/identity/nin/verify',
+          { nin },
           {
             headers: {
-              'Authorization': `Bearer ${process.env.BVN_VERIFICATION_API_KEY}`,
+              'Authorization': `Bearer ${process.env.NIN_VERIFICATION_API_KEY}`,
               'Content-Type': 'application/json',
             },
           },
@@ -370,7 +402,7 @@ export class VerificationService {
           await this.prisma.user.update({
             where: { id: userId },
             data: {
-              bvnVerified: true,
+              ninVerified: true,
               verificationStatus: VerificationStatus.VERIFIED,
             },
           });
@@ -378,13 +410,13 @@ export class VerificationService {
         }
         return false;
       } catch (error) {
-        this.logger.error('BVN verification failed', error);
+        this.logger.error('NIN verification failed', error);
         return false;
       }
       */
 
     // Mock implementation for now
-    this.logger.warn('Using mock BVN verification - integrate real API');
+    this.logger.warn('Using mock NIN verification - integrate real API');
     return true;
   }
 

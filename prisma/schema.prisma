@@ -45,7 +45,7 @@ enum VerificationStatus {
 }
 
 enum GovtIdType {
-  BVN
+  NIN
   VOTER
   DL
   PASSPORT
@@ -63,6 +63,15 @@ enum TransactionType {
   ESCROW_RELEASE
   REFUND
   FEE
+}
+
+enum EscrowStatus {
+  HELD
+  RELEASABLE
+  PROCESSING  // Added for saga pattern - prevents double release during transfer
+  RELEASED
+  DISPUTED
+  FAILED      // Added for transfer failure recovery
 }
 
 enum SlotStatus {
@@ -108,6 +117,8 @@ model User {
   id            String   @id @default(cuid())
   isAdmin       Boolean  @default(false)
   isVerified    Boolean  @default(false)
+  isBanned      Boolean  @default(false)
+  probationStatus String? // NONE, PROBATION, WARNED
   email         String   @unique
   name          String?
   phone         String?
@@ -119,14 +130,24 @@ model User {
   otp           String?
   otpExpiry     DateTime?
   resetToken    String?
+  // Location fields
+  country       String?  @default("Nigeria")
+  state         String?  // Nigerian state (e.g., "Lagos", "Abuja", "Kano")
+  city          String?
+  address       String?
   // Verification & vendor fields
   govtIdType    GovtIdType?
   govtIdNumber  String?
   govtIdFiles   String[]
-  bvnVerified   Boolean   @default(false)
+  ninVerified   Boolean   @default(false)
   businessRegistrationNumber String?
   taxId         String?
+  // Bank details for vendor payouts
   bankAccountId String?
+  bankCode      String?
+  bankName      String?
+  bankAccountName String?
+  paystackRecipientCode String?  // For Paystack transfers
   bankVerified  Boolean   @default(false)
   verificationStatus VerificationStatus @default(NONE)
   mfaEnabled    Boolean  @default(false)
@@ -146,8 +167,10 @@ model User {
   verifications           Verification[]
   transactions            Transaction[]
   poolSlots               PoolSlot[]       @relation("BuyerSlots")
-  
+  escrowEntries           EscrowEntry[]    @relation("VendorEscrowEntries")
+
   @@index([email, verificationStatus])
+  @@index([state, role])
 }
 
 model PendingSignup {
@@ -158,6 +181,10 @@ model PendingSignup {
   role       Role
   otp        String
   otpExpiry  DateTime
+  // Location fields
+  country    String   @default("Nigeria")
+  state      String
+  city       String?
   createdAt  DateTime @default(now())
 }
 
@@ -220,14 +247,16 @@ model PendingSubscription {
   gateway           PaymentGateway
   stripeSessionId   String?         @unique
   paystackRef       String?         @unique
+  idempotencyKey    String?         @unique
   deliveryFee       Decimal         @default(0.0) @db.Decimal(18,2)
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 
   user              User            @relation(fields: [userId], references: [id])
   pool              Pool            @relation(fields: [poolId], references: [id])
-  
+
   @@index([status, createdAt])
+  @@index([idempotencyKey])
 }
 
 model Verification {
@@ -249,14 +278,42 @@ model ProductCatalog {
   name         String
   sku          String   @unique
   unit         String
+  category     String?
   allowedUnits Json?
   seasonalFlag Boolean  @default(false)
   description  String?
+  imageUrl     String?
   active       Boolean  @default(true)
   adminManaged Boolean  @default(true)
 
   pools        Pool[]
+  suggestions  ProductSuggestion[]
   @@index([active, seasonalFlag])
+  @@index([category, active])
+}
+
+// Vendor product suggestions for admin approval
+model ProductSuggestion {
+  id           String   @id @default(uuid())
+  vendorId     String
+  productName  String
+  description  String?
+  category     String?
+  unit         String?
+  reason       String?  // Why they want to sell this
+  status       String   @default("PENDING") // PENDING, APPROVED, REJECTED
+  adminNotes   String?
+  approvedById String?
+  approvedAt   DateTime?
+  rejectedAt   DateTime?
+  // If approved, link to created ProductCatalog entry
+  productId    String?
+  product      ProductCatalog? @relation(fields: [productId], references: [id])
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([vendorId, status])
+  @@index([status, createdAt])
 }
 
 model PoolSlot {
@@ -282,6 +339,7 @@ model Transaction {
   externalTxnId   String?  @unique
   userId          String
   poolId          String?
+  escrowEntryId   String?
   amount          Decimal  @db.Decimal(18,2)
   fees            Decimal  @default(0.0) @db.Decimal(18,2)
   status          TransactionStatus @default(INITIATED)
@@ -292,6 +350,7 @@ model Transaction {
   user            User     @relation(fields: [userId], references: [id])
   pool            Pool?    @relation(fields: [poolId], references: [id])
   poolSlot        PoolSlot? @relation("PoolSlotTransaction")
+  escrowEntry     EscrowEntry? @relation(fields: [escrowEntryId], references: [id])
 }
 
 model EscrowEntry {
@@ -301,10 +360,26 @@ model EscrowEntry {
   releasedAmount  Decimal  @default(0.0) @db.Decimal(18,2)
   withheldAmount  Decimal  @default(0.0) @db.Decimal(18,2)
   withheldReason  String?
-  computations    Json?
-  createdAt       DateTime @default(now())
+  // Enhanced fields for production-ready escrow
+  vendorId              String?
+  status                String  @default("HELD")  // HELD, RELEASABLE, RELEASED, DISPUTED
+  deliveryConfirmed     Boolean @default(false)
+  releaseAt             DateTime?
+  paymentSource         String?  // 'paystack' or 'stripe'
+  paymentReference      String?  // Original payment reference
+  transferReference     String?  // Transfer reference when funds are released
+  transferRecipientCode String?  // Vendor's transfer recipient code
+  computations          Json?
+  createdAt             DateTime @default(now())
 
-  pool            Pool     @relation(fields: [poolId], references: [id])
+  pool                  Pool     @relation(fields: [poolId], references: [id])
+  vendor                User?    @relation("VendorEscrowEntries", fields: [vendorId], references: [id])
+  transactions          Transaction[]
+
+  @@index([poolId, status])
+  @@index([vendorId, status])
+  @@index([releaseAt])
+  @@index([paymentReference])
 }
 
 model Dispute {
@@ -319,6 +394,12 @@ model Dispute {
   resolvedAt         DateTime?
   resolutionNotes    String?
   distribution       Json?
+  
+  // Party resolution tracking - for dual-party dispute resolution
+  raiserResolved     Boolean @default(false)
+  vendorResolved     Boolean @default(false)
+  raiserResolvedAt   DateTime?
+  vendorResolvedAt   DateTime?
 
   pool               Pool   @relation(fields: [poolId], references: [id])
   raisedBy           User   @relation("UserDisputes", fields: [raisedByUserId], references: [id])
@@ -350,4 +431,84 @@ model AdminAuditLog {
 
   admin        User     @relation("AdminLogs", fields: [adminId], references: [id])
   @@index([adminId, createdAt])
+}
+
+// ============================================================================
+// SECURITY MODELS - Rate Limiting, OTP Tracking, Webhook Replay Prevention
+// ============================================================================
+
+model OtpAttempt {
+  id           String   @id @default(uuid())
+  email        String
+  ipAddress    String?
+  attempts     Int      @default(0)
+  lastAttempt  DateTime @default(now())
+  lockedUntil  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([email])
+  @@index([email, lockedUntil])
+  @@index([ipAddress])
+}
+
+model WebhookEvent {
+  id              String   @id @default(uuid())
+  provider        String   // 'paystack' or 'stripe'
+  eventId         String   // Provider's event ID or reference
+  eventType       String   // e.g., 'charge.success'
+  processedAt     DateTime @default(now())
+  signature       String?  // Store signature for audit
+  
+  @@unique([provider, eventId])
+  @@index([provider, eventId])
+  @@index([processedAt])
+}
+
+model PaymentRateLimit {
+  id              String   @id @default(uuid())
+  userId          String
+  initiations     Int      @default(0)
+  failedAttempts  Int      @default(0)
+  windowStart     DateTime @default(now())
+  blockedUntil    DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([userId])
+  @@index([userId, windowStart])
+  @@index([blockedUntil])
+}
+
+// ============================================================================
+// METRICS & OBSERVABILITY
+// ============================================================================
+
+model SystemMetric {
+  id           String   @id @default(uuid())
+  metricName   String
+  metricValue  Decimal  @db.Decimal(18,4)
+  labels       Json?    // Additional labels/dimensions
+  timestamp    DateTime @default(now())
+
+  @@index([metricName, timestamp])
+}
+
+// ============================================================================
+// NEWSLETTER
+// ============================================================================
+
+model NewsletterSubscriber {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  name         String?
+  isActive     Boolean   @default(true)
+  subscribedAt DateTime  @default(now())
+  unsubscribedAt DateTime?
+  source       String?   @default("footer") // Where they subscribed from
+  tags         String[]  @default([])       // For segmentation
+  
+  @@index([email])
+  @@index([isActive])
+  @@index([subscribedAt])
 }

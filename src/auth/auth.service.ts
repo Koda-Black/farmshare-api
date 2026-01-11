@@ -10,11 +10,14 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../services/prisma.service';
 import * as bcrypt from 'bcrypt';
+import * as crypto from 'crypto';
 import { SignUpDto } from './dto/signup.dto';
 import { LoginDto } from './dto/login.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { EmailChannelService } from '../notifications/channels/email.channel';
+import { SecurityService } from '../common/services/security.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 import { ConfigService } from '@nestjs/config';
 
@@ -25,6 +28,8 @@ export class AuthService {
     private jwtService: JwtService,
     private configService: ConfigService,
     private emailChannel: EmailChannelService,
+    private securityService: SecurityService,
+    private notificationsService: NotificationsService,
   ) {}
 
   private generateTokens(payload: any) {
@@ -50,7 +55,8 @@ export class AuthService {
   }
 
   async signUp(signUpDto: SignUpDto) {
-    const { email, password, name, role } = signUpDto as any;
+    const { email, password, name, role, state, country, city } =
+      signUpDto as any;
 
     // Check if a verified user already exists
     const existingUser = await this.prisma.user.findUnique({
@@ -73,7 +79,7 @@ export class AuthService {
     const otp = await this.generateOtp();
     const otpExpiry = new Date(Date.now() + 10 * 60000);
 
-    // Save pending signup instead of creating a user
+    // Save pending signup with location fields
     await this.prisma.pendingSignup.create({
       data: {
         email,
@@ -82,17 +88,40 @@ export class AuthService {
         role,
         otp,
         otpExpiry,
+        state: state || 'Lagos', // Default to Lagos if not provided
+        country: country || 'Nigeria',
+        city,
       },
     });
 
-    await this.emailChannel.sendOtpEmail(email, name, otp);
+    // Try to send email, but don't fail signup if email fails
+    let emailSent = false;
+    try {
+      await this.emailChannel.sendOtpEmail(email, name, otp);
+      emailSent = true;
+    } catch (error) {
+      console.error('Failed to send OTP email:', error.message);
+      // In development, we'll return the OTP so testing can proceed
+    }
+
+    const isDev = this.configService.get<string>('NODE_ENV') !== 'production';
 
     return {
-      message: 'OTP sent to your email',
+      message: emailSent
+        ? 'OTP sent to your email'
+        : 'Account created. Email delivery failed - check your email settings.',
+      emailSent,
+      // In development, return OTP for testing when email fails
+      ...(isDev && !emailSent
+        ? { otp, devNote: 'OTP returned for dev testing since email failed' }
+        : {}),
     };
   }
-  async verifyOtp(verifyOtpDto: VerifyOtpDto) {
+  async verifyOtp(verifyOtpDto: VerifyOtpDto, ipAddress?: string) {
     const { email, otp } = verifyOtpDto;
+
+    // Check rate limit and lockout status
+    await this.securityService.checkOtpRateLimit(email, ipAddress);
 
     const pending = await this.prisma.pendingSignup.findUnique({
       where: { email },
@@ -106,22 +135,36 @@ export class AuthService {
       !pending.otpExpiry ||
       new Date() > pending.otpExpiry
     ) {
+      // Record failed attempt
+      await this.securityService.recordFailedOtpAttempt(email, ipAddress);
       throw new UnauthorizedException('Invalid or expired OTP');
     }
 
-    // Create verified user now
-    const user = await this.prisma.user.create({
-      data: {
-        email: pending.email,
-        name: pending.name,
-        password: pending.password,
-        role: pending.role,
-        verificationStatus: 'VERIFIED',
-      },
-    });
+    // Clear OTP attempts on success
+    await this.securityService.clearOtpAttempts(email);
 
-    // Clean up pending record
-    await this.prisma.pendingSignup.delete({ where: { email } });
+    // Create verified user and cleanup pending record atomically
+    const user = await this.prisma.executeQuickTransaction(async (tx) => {
+      // Create verified user with location fields
+      const newUser = await tx.user.create({
+        data: {
+          email: pending.email,
+          name: pending.name,
+          password: pending.password,
+          role: pending.role,
+          isVerified: true,
+          // Location fields from pending signup
+          state: pending.state,
+          country: pending.country,
+          city: pending.city,
+        },
+      });
+
+      // Clean up pending record
+      await tx.pendingSignup.delete({ where: { email } });
+
+      return newUser;
+    });
 
     const payload = {
       sub: user.id,
@@ -131,6 +174,18 @@ export class AuthService {
     const { accessToken, refreshToken } = this.generateTokens(payload);
     await this.saveRefreshToken(user.id, refreshToken);
 
+    // Send welcome notification (async, don't await to not block response)
+    this.notificationsService
+      .sendWelcomeNotification({
+        id: user.id,
+        email: user.email,
+        name: user.name || 'User',
+        role: user.role,
+      })
+      .catch((err) =>
+        console.error('Failed to send welcome notification:', err),
+      );
+
     return {
       accessToken,
       refreshToken,
@@ -139,6 +194,8 @@ export class AuthService {
         name: user.name,
         email: user.email,
         role: user.role,
+        state: user.state,
+        country: user.country,
       },
     };
   }
@@ -172,7 +229,7 @@ export class AuthService {
       throw new NotFoundException('Invalid credentials');
     }
 
-    if (user.verificationStatus !== 'VERIFIED') {
+    if (user.isVerified !== true) {
       throw new ForbiddenException('Email not verified');
     }
 
@@ -274,27 +331,32 @@ export class AuthService {
     });
 
     if (!dbUser) {
+      // Generate a random secure password for OAuth users
+      // This prevents password login for OAuth-only accounts
+      const randomPassword = crypto.randomBytes(32).toString('hex');
+      const hashedPassword = await bcrypt.hash(randomPassword, 10);
+
       dbUser = await this.prisma.user.create({
         data: {
           email: user.email,
           name: user.name,
           phone: '0000000000',
-          // role: user.rolel || 'buyer',
-          password: '',
-          verificationStatus: 'VERIFIED',
+          role: (user as any)?.role ?? 'BUYER',
+          password: hashedPassword, // Secure random password instead of empty
+          isVerified: true,
         },
       });
-    } else if (dbUser.verificationStatus !== 'VERIFIED') {
+    } else if (dbUser.isVerified !== true) {
       await this.prisma.user.update({
         where: { id: dbUser.id },
-        data: { verificationStatus: 'VERIFIED' },
+        data: { isVerified: true },
       });
     }
 
     const payload = {
       sub: dbUser.id,
       email: dbUser.email,
-      role: dbUser.role, // Assuming role is a field in the user model
+      role: dbUser.role,
     };
     const { accessToken, refreshToken } = this.generateTokens(payload);
     await this.saveRefreshToken(dbUser.id, refreshToken);

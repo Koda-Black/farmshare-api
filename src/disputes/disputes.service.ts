@@ -988,4 +988,209 @@ export class DisputesService {
 
     return Math.round(totalHours / resolvedDisputes.length);
   }
+
+  /**
+   * Raiser marks dispute as resolved from their side.
+   * When both raiser and vendor agree, dispute auto-resolves and funds are released.
+   */
+  async markRaiserResolved(disputeId: string, userId: string) {
+    const dispute = await this.prisma.dispute.findUnique({
+      where: { id: disputeId },
+      include: {
+        pool: {
+          include: {
+            vendor: true,
+          },
+        },
+        raisedBy: true,
+      },
+    });
+
+    if (!dispute) {
+      throw new NotFoundException('Dispute not found');
+    }
+
+    if (dispute.raisedByUserId !== userId) {
+      throw new BadRequestException(
+        'Only the dispute raiser can mark this as resolved',
+      );
+    }
+
+    if (dispute.status === 'resolved' || dispute.status === 'rejected') {
+      throw new BadRequestException('Dispute is already closed');
+    }
+
+    // Update raiser resolution status
+    const updatedDispute = await this.prisma.dispute.update({
+      where: { id: disputeId },
+      data: {
+        raiserResolved: true,
+        raiserResolvedAt: new Date(),
+      },
+    });
+
+    this.logger.log(`Raiser marked dispute ${disputeId} as resolved`);
+
+    // Check if both parties have resolved
+    if (updatedDispute.vendorResolved) {
+      return this.autoResolveDispute(disputeId);
+    }
+
+    // Notify vendor
+    await this.emailChannel.send(
+      dispute.pool.vendor.email,
+      'Dispute Resolution Progress',
+      `The buyer has marked dispute ${disputeId} as resolved from their side. Please mark it as resolved from your side to complete the resolution.`,
+    );
+
+    return {
+      message:
+        'Dispute marked as resolved by raiser. Awaiting vendor confirmation.',
+      disputeId,
+      raiserResolved: true,
+      vendorResolved: updatedDispute.vendorResolved,
+    };
+  }
+
+  /**
+   * Vendor marks dispute as resolved from their side.
+   * When both raiser and vendor agree, dispute auto-resolves and funds are released.
+   */
+  async markVendorResolved(disputeId: string, userId: string) {
+    const dispute = await this.prisma.dispute.findUnique({
+      where: { id: disputeId },
+      include: {
+        pool: {
+          include: {
+            vendor: true,
+          },
+        },
+        raisedBy: true,
+      },
+    });
+
+    if (!dispute) {
+      throw new NotFoundException('Dispute not found');
+    }
+
+    if (dispute.pool.vendorId !== userId) {
+      throw new BadRequestException(
+        'Only the pool vendor can mark this as resolved',
+      );
+    }
+
+    if (dispute.status === 'resolved' || dispute.status === 'rejected') {
+      throw new BadRequestException('Dispute is already closed');
+    }
+
+    // Update vendor resolution status
+    const updatedDispute = await this.prisma.dispute.update({
+      where: { id: disputeId },
+      data: {
+        vendorResolved: true,
+        vendorResolvedAt: new Date(),
+      },
+    });
+
+    this.logger.log(`Vendor marked dispute ${disputeId} as resolved`);
+
+    // Check if both parties have resolved
+    if (updatedDispute.raiserResolved) {
+      return this.autoResolveDispute(disputeId);
+    }
+
+    // Notify raiser
+    await this.emailChannel.send(
+      dispute.raisedBy.email,
+      'Dispute Resolution Progress',
+      `The vendor has marked dispute ${disputeId} as resolved from their side. Please mark it as resolved from your side to complete the resolution.`,
+    );
+
+    return {
+      message:
+        'Dispute marked as resolved by vendor. Awaiting buyer confirmation.',
+      disputeId,
+      raiserResolved: updatedDispute.raiserResolved,
+      vendorResolved: true,
+    };
+  }
+
+  /**
+   * Auto-resolve dispute when both parties agree.
+   * Releases withheld escrow funds to vendor.
+   */
+  private async autoResolveDispute(disputeId: string) {
+    const dispute = await this.prisma.dispute.findUnique({
+      where: { id: disputeId },
+      include: {
+        pool: {
+          include: {
+            vendor: true,
+          },
+        },
+        raisedBy: true,
+      },
+    });
+
+    if (!dispute) {
+      throw new NotFoundException('Dispute not found');
+    }
+
+    // Get escrow entry
+    const escrow = await this.prisma.escrowEntry.findFirst({
+      where: { poolId: dispute.poolId },
+    });
+
+    await this.prisma.$transaction(async (tx) => {
+      // Update dispute status
+      await tx.dispute.update({
+        where: { id: disputeId },
+        data: {
+          status: 'resolved',
+          resolvedAt: new Date(),
+          resolutionNotes: 'Auto-resolved: Both parties agreed to resolution.',
+        },
+      });
+
+      // Release withheld escrow if exists
+      if (escrow && Number(escrow.withheldAmount) > 0) {
+        const withheldAmount = Number(escrow.withheldAmount);
+
+        await tx.escrowEntry.update({
+          where: { id: escrow.id },
+          data: {
+            withheldAmount: 0,
+            withheldReason: null,
+          },
+        });
+
+        this.logger.log(
+          `Released withheld escrow of ₦${withheldAmount} for dispute ${disputeId}`,
+        );
+      }
+    });
+
+    // Notify both parties
+    await Promise.all([
+      this.emailChannel.send(
+        dispute.raisedBy.email,
+        'Dispute Resolved',
+        `Your dispute has been successfully resolved as both parties agreed. The pool will proceed as normal.`,
+      ),
+      this.emailChannel.send(
+        dispute.pool.vendor.email,
+        'Dispute Resolved',
+        `The dispute has been successfully resolved as both parties agreed. Any withheld funds will be released.`,
+      ),
+    ]);
+
+    this.logger.log(`Dispute ${disputeId} auto-resolved by mutual agreement`);
+
+    return {
+      message: 'Dispute auto-resolved by mutual agreement',
+      disputeId,
+      status: 'resolved',
+      resolution: 'mutual_agreement',
+    };
+  }
 }

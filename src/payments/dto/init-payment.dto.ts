@@ -6,6 +6,8 @@ import {
   Min,
   IsBoolean,
   Validate,
+  IsOptional,
+  IsNotEmpty,
 } from 'class-validator';
 import { PaymentMethod } from '../payments.service';
 import { IsEitherTrue } from '../../utils/either-true.validator';
@@ -27,4 +29,9 @@ export class InitPaymentDto {
   @IsBoolean()
   @Validate(IsEitherTrue, ['waybillWithin'])
   waybillOutside: boolean;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  idempotencyKey?: string;
 }

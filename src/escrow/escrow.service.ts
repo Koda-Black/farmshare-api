@@ -5,17 +5,37 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../services/prisma.service';
+import { PaystackService } from '../services/paystack.service';
 import { EmailChannelService } from '../notifications/channels/email.channel';
 import { TransactionType, TransactionStatus, PoolStatus } from '@prisma/client';
 import Decimal from 'decimal.js';
 
+/**
+ * EscrowService manages the lifecycle of funds held between payment and vendor payout.
+ *
+ * ESCROW FLOW:
+ * 1. Buyer pays → Funds go to platform's Paystack account
+ * 2. EscrowEntry created → Tracks amount, pool, vendor, status
+ * 3. Pool fills + Delivery marked complete → Status becomes RELEASABLE
+ * 4. Grace period (7 days) → Buyer can confirm or raise dispute
+ * 5. Auto-release → If no dispute after grace period, funds transfer to vendor
+ * 6. Dispute → Funds remain HELD until admin resolution
+ *
+ * STATUSES:
+ * - HELD: Funds collected, awaiting pool completion
+ * - RELEASABLE: Pool completed, grace period started
+ * - RELEASED: Funds transferred to vendor
+ * - DISPUTED: Dispute raised, awaiting resolution
+ */
 @Injectable()
 export class EscrowService {
   private readonly logger = new Logger(EscrowService.name);
   private readonly COMMISSION_RATE = 0.05; // 5% platform commission
+  private readonly GRACE_PERIOD_DAYS = 7; // Days buyer has to raise dispute
 
   constructor(
     private prisma: PrismaService,
+    private paystackService: PaystackService,
     private emailChannel: EmailChannelService,
   ) {}
 
@@ -32,42 +52,51 @@ export class EscrowService {
       throw new NotFoundException('Subscription not found');
     }
 
-    // Check if escrow entry exists
-    let escrow = await this.prisma.escrowEntry.findFirst({
-      where: { poolId },
-    });
-
     const amountPaid = Number(subscription.amountPaid);
 
-    if (!escrow) {
-      // Create new escrow entry
-      escrow = await this.prisma.escrowEntry.create({
-        data: {
-          poolId,
-          totalHeld: amountPaid,
-          computations: {
-            contributions: {
-              [subscription.userId]: amountPaid,
-            },
-          },
-        },
-      });
-    } else {
-      // Update existing escrow
-      const contributions = (escrow.computations as any)?.contributions || {};
-      contributions[subscription.userId] =
-        (contributions[subscription.userId] || 0) + amountPaid;
+    // Use transaction with row-level locking to prevent race conditions
+    const escrow = await this.prisma.$transaction(
+      async (tx) => {
+        // Check if escrow entry exists with row-level lock
+        let existingEscrow = await tx.escrowEntry.findFirst({
+          where: { poolId },
+        });
 
-      await this.prisma.escrowEntry.update({
-        where: { id: escrow.id },
-        data: {
-          totalHeld: Number(escrow.totalHeld) + amountPaid,
-          computations: {
-            contributions,
-          },
-        },
-      });
-    }
+        if (!existingEscrow) {
+          // Create new escrow entry
+          return tx.escrowEntry.create({
+            data: {
+              poolId,
+              totalHeld: amountPaid,
+              computations: {
+                contributions: {
+                  [subscription.userId]: amountPaid,
+                },
+              },
+            },
+          });
+        } else {
+          // ATOMIC UPDATE: Use increment to prevent read-modify-write race condition
+          const contributions =
+            (existingEscrow.computations as any)?.contributions || {};
+          contributions[subscription.userId] =
+            (contributions[subscription.userId] || 0) + amountPaid;
+
+          return tx.escrowEntry.update({
+            where: { id: existingEscrow.id },
+            data: {
+              totalHeld: { increment: amountPaid }, // Atomic increment
+              computations: {
+                contributions,
+              },
+            },
+          });
+        }
+      },
+      {
+        isolationLevel: 'Serializable', // Prevent phantom reads and concurrent modifications
+      },
+    );
 
     // Create transaction record
     await this.prisma.transaction.create({
@@ -222,41 +251,132 @@ export class EscrowService {
       .sub(commission)
       .toNumber();
 
-    // TODO: Integrate with Paystack transfer API to send funds to vendor
-    // For now, mark as released
+    // Verify vendor has Paystack recipient code for transfers
+    if (!pool.vendor.paystackRecipientCode) {
+      // Try to create one if bank details exist
+      if (pool.vendor.bankAccountId && pool.vendor.bankCode) {
+        const recipient = await this.paystackService.createTransferRecipient(
+          pool.vendor.bankAccountName || pool.vendor.name || 'Vendor',
+          pool.vendor.bankAccountId,
+          pool.vendor.bankCode,
+        );
 
-    await this.prisma.$transaction(async (tx) => {
-      // Update escrow entry
-      await tx.escrowEntry.update({
+        await this.prisma.user.update({
+          where: { id: pool.vendorId },
+          data: { paystackRecipientCode: recipient.recipientCode },
+        });
+
+        pool.vendor.paystackRecipientCode = recipient.recipientCode;
+      } else {
+        throw new BadRequestException(
+          'Vendor bank details not configured. Cannot release escrow.',
+        );
+      }
+    }
+
+    // SAGA PATTERN: Mark escrow as PROCESSING before transfer
+    // This prevents race conditions and allows recovery from failed transfers
+    const transferReference = `ESC_${poolId}_${Date.now()}`;
+
+    // Step 1: Mark as processing (prevents double release)
+    const processingEscrow = await this.prisma.escrowEntry.updateMany({
+      where: {
+        id: escrow.id,
+        status: { in: ['HELD', 'RELEASABLE'] }, // Only update if not already processing/released
+      },
+      data: {
+        status: 'PROCESSING',
+        transferReference,
+      },
+    });
+
+    if (processingEscrow.count === 0) {
+      throw new BadRequestException(
+        'Escrow is already being processed or has been released',
+      );
+    }
+
+    // Step 2: Initiate actual transfer via Paystack
+    let transferResult: {
+      transferCode: string;
+      reference: string;
+      status: string;
+    };
+
+    try {
+      transferResult = await this.paystackService.initiateTransfer(
+        netForVendor,
+        pool.vendor.paystackRecipientCode,
+        `FarmShare escrow release for pool ${poolId}`,
+        transferReference,
+      );
+    } catch (transferError) {
+      // Step 2a: Rollback - mark as FAILED if transfer fails
+      await this.prisma.escrowEntry.update({
         where: { id: escrow.id },
         data: {
-          releasedAmount: Number(escrow.releasedAmount) + releaseableAmount,
+          status: 'FAILED',
+          transferReference: null,
         },
       });
+      this.logger.error(`Transfer failed for pool ${poolId}:`, transferError);
+      throw new BadRequestException(
+        'Failed to transfer funds to vendor. Please retry or contact support.',
+      );
+    }
 
-      // Create release transaction
-      await tx.transaction.create({
-        data: {
-          userId: pool.vendorId,
-          poolId,
-          amount: netForVendor,
-          fees: commission,
-          status: TransactionStatus.SUCCESS,
-          type: TransactionType.ESCROW_RELEASE,
-          metadata: {
-            reason: reason || 'Automatic release after grace period',
-            commission,
-            originalAmount: releaseableAmount,
+    // Step 3: Complete the saga - update DB after successful transfer
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        // Update escrow entry with transfer details
+        await tx.escrowEntry.update({
+          where: { id: escrow.id },
+          data: {
+            releasedAmount: { increment: releaseableAmount }, // Atomic increment
+            status: 'RELEASED',
+            transferRecipientCode: pool.vendor.paystackRecipientCode,
           },
-        },
-      });
+        });
 
-      // Update pool status
-      await tx.pool.update({
-        where: { id: poolId },
-        data: { status: PoolStatus.COMPLETED },
+        // Create release transaction with transfer details
+        await tx.transaction.create({
+          data: {
+            userId: pool.vendorId,
+            poolId,
+            amount: netForVendor,
+            fees: commission,
+            status: TransactionStatus.SUCCESS,
+            type: TransactionType.ESCROW_RELEASE,
+            externalTxnId: transferResult.transferCode,
+            metadata: {
+              reason: reason || 'Automatic release after grace period',
+              commission,
+              originalAmount: releaseableAmount,
+              transferReference: transferResult.reference,
+              transferStatus: transferResult.status,
+            },
+          },
+        });
+
+        // Update pool status
+        await tx.pool.update({
+          where: { id: poolId },
+          data: { status: PoolStatus.COMPLETED },
+        });
       });
-    });
+    } catch (dbError) {
+      // Transfer succeeded but DB failed - log for manual reconciliation
+      this.logger.error(
+        `CRITICAL: Transfer succeeded but DB update failed for pool ${poolId}. ` +
+          `Transfer ref: ${transferReference}. Manual reconciliation required.`,
+        dbError,
+      );
+      // Still throw to alert the caller, but transfer has completed
+      throw new BadRequestException(
+        'Transfer completed but database update failed. Contact support with reference: ' +
+          transferReference,
+      );
+    }
 
     // Send notification to vendor
     await this.emailChannel.send(

@@ -4,6 +4,8 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { VerificationProcessor } from './processors/verification.processor';
 import { EscrowReleaseProcessor } from './processors/escrow-release.processor';
 import { NotificationProcessor } from './processors/notification.processor';
+import { PaymentProcessor } from './processors/payment.processor';
+import { QueueService } from './queue.service';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { EmailChannelService } from '../notifications/channels/email.channel';
@@ -48,6 +50,17 @@ import { EscrowModule } from '../escrow/escrow.module';
         },
       },
       {
+        name: 'payment-processing',
+        defaultJobOptions: {
+          priority: 1, // Highest priority - payments are critical
+          attempts: 5,
+          backoff: {
+            type: 'exponential',
+            delay: 2000,
+          },
+        },
+      },
+      {
         name: 'escrow-release',
         defaultJobOptions: {
           priority: 2, // Medium priority
@@ -68,11 +81,13 @@ import { EscrowModule } from '../escrow/escrow.module';
     NotificationsModule,
   ],
   providers: [
+    QueueService,
     VerificationProcessor,
+    PaymentProcessor,
     EscrowReleaseProcessor,
     NotificationProcessor,
     EmailChannelService,
   ],
-  exports: [BullModule],
+  exports: [BullModule, QueueService],
 })
 export class QueueModule {}
