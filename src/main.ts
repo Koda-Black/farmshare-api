@@ -271,11 +271,12 @@ async function bootstrap() {
   // 12. Initialize scheduled jobs
   const queueService = app.get(QueueService);
 
-  // Initialize scheduled escrow release job (runs every minute for 5min testing grace period)
+  // Initialize scheduled escrow release job
+  // Production: every 15 minutes, Development: every minute for testing
   try {
     await queueService.addScheduledEscrowReleaseJob();
     logger.log(
-      '✅ Scheduled escrow release job initialized (every minute for 5min testing)',
+      `✅ Scheduled escrow release job initialized (${isProduction ? 'every 15 minutes' : 'every minute for testing'})`,
     );
   } catch (error) {
     logger.error('Failed to initialize scheduled escrow release job:', error);

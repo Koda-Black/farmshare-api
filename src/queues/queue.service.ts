@@ -71,14 +71,18 @@ export class QueueService {
     );
   }
 
-  // Add scheduled escrow releases job (runs every minute to check for pools ready for release)
+  // Add scheduled escrow releases job (runs on interval to check for pools ready for release)
+  // Production: every 15 minutes, Development: every minute for testing
   async addScheduledEscrowReleaseJob() {
+    const isProduction = process.env.NODE_ENV === 'production';
+    const cronPattern = isProduction ? '*/15 * * * *' : '* * * * *';
+
     const job = await this.escrowReleaseQueue.add(
       'process-scheduled-releases',
       {},
       {
         priority: 2,
-        repeat: { pattern: '* * * * *' }, // Every minute (for testing with 5min grace period)
+        repeat: { pattern: cronPattern },
         attempts: 3,
         backoff: {
           type: 'exponential',
@@ -87,7 +91,9 @@ export class QueueService {
       },
     );
 
-    this.logger.log(`Added scheduled escrow release job: ${job.id}`);
+    this.logger.log(
+      `Added scheduled escrow release job: ${job.id} (interval: ${isProduction ? '15 minutes' : '1 minute'})`,
+    );
     return job;
   }
 
