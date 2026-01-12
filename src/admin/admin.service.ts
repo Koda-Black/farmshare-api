@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../services/prisma.service';
+import { PaystackService } from '../services/paystack.service';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { EmailChannelService } from '../notifications/channels/email.channel';
@@ -57,6 +58,7 @@ export class AdminService {
 
   constructor(
     private prisma: PrismaService,
+    private paystackService: PaystackService,
     private jwtService: JwtService,
     private configService: ConfigService,
     private emailChannel: EmailChannelService,
@@ -1256,7 +1258,6 @@ export class AdminService {
           },
         },
         subscriptions: {
-          where: { status: 'ACTIVE' },
           include: {
             user: {
               select: {
@@ -1343,10 +1344,14 @@ export class AdminService {
   }
 
   /**
-   * Initiate an actual payout to vendor (simulated for demo)
+   * Initiate an actual payout to vendor
+   * In development: simulated (no real money transfer)
+   * In production: real Paystack transfer to vendor's bank account
    */
   async initiatePayout(adminId: string, dto: InitiatePayoutDto) {
     const { poolId, notes } = dto;
+    const isProduction =
+      this.configService.get<string>('NODE_ENV') === 'production';
 
     // First simulate to get all the calculations
     const simulation = await this.simulatePayout({ poolId });
@@ -1361,14 +1366,80 @@ export class AdminService {
 
     const escrow = await this.prisma.escrowEntry.findFirst({
       where: { poolId },
+      include: {
+        pool: {
+          include: {
+            vendor: true,
+          },
+        },
+      },
     });
 
     if (!escrow) {
       throw new NotFoundException('Escrow entry not found');
     }
 
-    // Simulate the payout (in production, this would call Paystack transfer)
     const transferReference = `PAYOUT_${poolId}_${Date.now()}`;
+    let transferResult: {
+      transferCode: string;
+      reference: string;
+      status: string;
+    } | null = null;
+
+    // In production, initiate real Paystack transfer
+    if (isProduction) {
+      // Ensure vendor has Paystack recipient code
+      let recipientCode = escrow.pool.vendor.paystackRecipientCode;
+
+      if (!recipientCode) {
+        // Create transfer recipient if not exists
+        if (escrow.pool.vendor.bankAccountId && escrow.pool.vendor.bankCode) {
+          const recipient = await this.paystackService.createTransferRecipient(
+            escrow.pool.vendor.bankAccountName ||
+              escrow.pool.vendor.name ||
+              'Vendor',
+            escrow.pool.vendor.bankAccountId,
+            escrow.pool.vendor.bankCode,
+          );
+          recipientCode = recipient.recipientCode;
+
+          // Save recipient code for future use
+          await this.prisma.user.update({
+            where: { id: escrow.pool.vendorId },
+            data: { paystackRecipientCode: recipientCode },
+          });
+        } else {
+          throw new BadRequestException(
+            'Vendor bank details not properly configured',
+          );
+        }
+      }
+
+      // Mark as PROCESSING before transfer (prevents race conditions)
+      await this.prisma.escrowEntry.update({
+        where: { id: escrow.id },
+        data: { status: 'PROCESSING', transferReference },
+      });
+
+      try {
+        // Initiate real Paystack transfer
+        transferResult = await this.paystackService.initiateTransfer(
+          simulation.calculation.netPayoutToVendor,
+          recipientCode,
+          `FarmShare payout for pool ${poolId}`,
+          transferReference,
+        );
+      } catch (transferError) {
+        // Rollback on failure
+        await this.prisma.escrowEntry.update({
+          where: { id: escrow.id },
+          data: { status: 'FAILED', transferReference: null },
+        });
+        throw new BadRequestException(
+          'Failed to transfer funds via Paystack. Please retry or contact support.',
+        );
+      }
+    }
 
     // Update escrow entry
     await this.prisma.escrowEntry.update({
@@ -1376,7 +1447,7 @@ export class AdminService {
       data: {
         releasedAmount: simulation.escrow.availableForPayout,
         status: 'RELEASED',
-        transferReference,
+        transferReference: transferResult?.reference || transferReference,
         computations: {
           ...(escrow.computations as any),
           payout: {
@@ -1385,6 +1456,8 @@ export class AdminService {
             platformFee: simulation.calculation.platformFee,
             netPayout: simulation.calculation.netPayoutToVendor,
             notes,
+            isSimulated: !isProduction,
+            transferCode: transferResult?.transferCode,
           },
         },
       },
@@ -1399,11 +1472,13 @@ export class AdminService {
         fees: simulation.calculation.platformFee,
         status: 'SUCCESS',
         type: 'ESCROW_RELEASE',
-        externalTxnId: transferReference,
+        externalTxnId: transferResult?.transferCode || transferReference,
         metadata: {
           platformFee: simulation.calculation.platformFee,
           platformFeeRate: this.PLATFORM_FEE_RATE,
           notes,
+          isSimulated: !isProduction,
+          transferReference: transferResult?.reference,
         },
       },
     });
@@ -1455,13 +1530,17 @@ export class AdminService {
     );
 
     return {
-      message: 'Payout initiated successfully',
+      message: isProduction
+        ? 'Payout initiated successfully - Real transfer sent via Paystack'
+        : 'Payout simulated successfully (Development mode - no real transfer)',
       payout: {
-        transferReference,
+        transferReference: transferResult?.reference || transferReference,
+        transferCode: transferResult?.transferCode,
         amount: simulation.calculation.netPayoutToVendor,
         platformFee: simulation.calculation.platformFee,
         vendor: simulation.vendor.name,
         status: 'RELEASED',
+        isSimulated: !isProduction,
       },
     };
   }
@@ -1781,7 +1860,7 @@ export class AdminService {
       this.prisma.user.count({
         where: {
           role: 'VENDOR',
-          verificationStatus: 'verified',
+          verificationStatus: 'VERIFIED',
         },
       }),
 
