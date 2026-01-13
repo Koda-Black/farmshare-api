@@ -190,6 +190,8 @@ export class EnvironmentConfig {
         backendUrl: productionBackendUrl,
         allowedOrigins: [
           productionFrontendUrl,
+          // Vercel frontend URL - hardcoded for reliability
+          'https://farmshare-marketplace.vercel.app',
           // Add any additional production origins
         ].filter(Boolean),
       };
