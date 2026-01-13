@@ -282,11 +282,11 @@ async function bootstrap() {
     logger.error('Failed to initialize scheduled escrow release job:', error);
   }
 
-  // 13. Server startup
-  const PORT = process.env.PORT ?? 8282;
-  await app.listen(PORT);
+  // 13. Server startup - Use PORT 8000 as default (Koyeb standard)
+  const PORT = process.env.PORT ?? 8000;
+  await app.listen(PORT, '0.0.0.0'); // Listen on all interfaces for container deployment
 
-  logger.log(`Server is listening at http://localhost:${PORT}`);
+  logger.log(`Server is listening at http://0.0.0.0:${PORT}`);
   logger.log(`Swagger UI available at http://localhost:${PORT}/swagger`);
 
   console.info(`

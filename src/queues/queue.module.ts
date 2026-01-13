@@ -15,7 +15,7 @@ import { EscrowModule } from '../escrow/escrow.module';
 /**
  * Shared Redis connection options for BullMQ
  * This ensures all queues share a single connection to minimize Redis connections
- * 
+ *
  * IMPORTANT: Free Redis tiers have limited connections (~30).
  * Each BullMQ Worker creates 2 connections, each Queue creates 1.
  * By sharing connections with sharedConnection: true, we reduce total connections.
@@ -29,9 +29,11 @@ import { EscrowModule } from '../escrow/escrow.module';
         const redisHost = configService.get('REDIS_HOST') || 'localhost';
         const redisPort = configService.get('REDIS_PORT') || 6379;
         const redisPassword = configService.get('REDIS_PASSWORD') || undefined;
-        
-        console.log(`[QueueModule] Configuring shared Redis connection to ${redisHost}:${redisPort}`);
-        
+
+        console.log(
+          `[QueueModule] Configuring shared Redis connection to ${redisHost}:${redisPort}`,
+        );
+
         return {
           connection: {
             host: redisHost,

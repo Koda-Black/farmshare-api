@@ -9,10 +9,10 @@ import IORedis, { Redis } from 'ioredis';
 
 /**
  * RedisService provides a shared Redis connection for the entire application.
- * 
+ *
  * IMPORTANT: This module creates a single shared Redis connection to avoid
  * hitting the max client limit on Redis (especially on free tiers).
- * 
+ *
  * Free Redis Labs tier allows ~30 connections max.
  * Each BullMQ Worker creates 2 connections, each Queue creates 1.
  * By sharing connections, we reduce total connections significantly.
@@ -36,7 +36,8 @@ export class RedisService implements OnModuleDestroy {
 
     const host = this.configService.get<string>('REDIS_HOST') || 'localhost';
     const port = this.configService.get<number>('REDIS_PORT') || 6379;
-    const password = this.configService.get<string>('REDIS_PASSWORD') || undefined;
+    const password =
+      this.configService.get<string>('REDIS_PASSWORD') || undefined;
 
     this.logger.log(`Creating shared Redis connection to ${host}:${port}`);
 
@@ -49,7 +50,9 @@ export class RedisService implements OnModuleDestroy {
       lazyConnect: false, // Connect immediately
       retryStrategy: (times: number) => {
         if (times > 5) {
-          this.logger.warn(`Redis connection failed after ${times} attempts, stopping retries`);
+          this.logger.warn(
+            `Redis connection failed after ${times} attempts, stopping retries`,
+          );
           return null; // Stop retrying after 5 attempts
         }
         const delay = Math.min(times * 1000, 5000); // Max 5 second delay
@@ -96,7 +99,8 @@ export class RedisService implements OnModuleDestroy {
   getConnectionOptions() {
     const host = this.configService.get<string>('REDIS_HOST') || 'localhost';
     const port = this.configService.get<number>('REDIS_PORT') || 6379;
-    const password = this.configService.get<string>('REDIS_PASSWORD') || undefined;
+    const password =
+      this.configService.get<string>('REDIS_PASSWORD') || undefined;
 
     return {
       host,
