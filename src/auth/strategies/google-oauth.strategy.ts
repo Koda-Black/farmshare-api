@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { Strategy, VerifyCallback } from 'passport-google-oauth2';
+import { Request } from 'express';
 
 @Injectable()
 export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
@@ -18,10 +19,30 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
       clientSecret,
       callbackURL,
       scope: ['profile', 'email'],
+      passReqToCallback: true, // Enable passing request to callback
+    });
+  }
+
+  /**
+   * Override authenticate to pass role and mode through OAuth state
+   */
+  authenticate(req: Request, options?: any) {
+    const role = req.query?.role || 'BUYER';
+    const mode = req.query?.mode || 'signup';
+
+    // Encode role and mode in OAuth state
+    const state = Buffer.from(JSON.stringify({ role, mode })).toString(
+      'base64',
+    );
+
+    super.authenticate(req, {
+      ...options,
+      state,
     });
   }
 
   validate(
+    req: Request,
     _accessToken: string,
     _refreshToken: string,
     profile: {
@@ -39,7 +60,7 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
       providerId: id,
       email: emails[0].value,
       name: `${name.givenName} ${name.familyName}`,
-      picture: photos[0].value,
+      picture: photos[0]?.value,
     };
 
     done(null, user);
