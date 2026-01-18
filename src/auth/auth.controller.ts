@@ -9,6 +9,7 @@ import {
   UseGuards,
   Param,
   Ip,
+  Query,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { SignUpDto } from './dto/signup.dto';
@@ -69,20 +70,105 @@ export class AuthController {
     return this.authService.resetPassword(resetPasswordDto);
   }
 
+  /**
+   * Initiate Google OAuth - stores role and mode in session/state
+   * Redirect URL: /auth/google?role=buyer&mode=signup
+   * or: /auth/google?mode=login
+   */
   @Get('google')
   @UseGuards(GoogleOauthGuard)
-  async googleAuth() {}
+  async googleAuth(@Query('role') role?: string, @Query('mode') mode?: string) {
+    // The guard handles the redirect to Google
+    // role and mode are passed through OAuth state
+  }
 
   @Get('google/callback')
   @UseGuards(GoogleOauthGuard)
   async googleAuthCallback(
-    @Req() req: Request & { user: { email: string; name: string } },
+    @Req()
+    req: Request & {
+      user: { email: string; name: string; picture?: string };
+      query: { state?: string };
+    },
     @Res() res: Response,
   ) {
-    const tokens = await this.authService.oAuthLogin(req.user as any);
-    res.redirect(
-      `${process.env.FRONTEND_URL}/oauth?token=${tokens.accessToken}&refresh=${tokens.refreshToken}`,
-    );
+    const frontendUrl =
+      process.env.PRODUCTION_FRONTEND_URL ||
+      process.env.FRONTEND_URL ||
+      'http://localhost:3000';
+
+    try {
+      // Parse state from OAuth (contains role and mode)
+      let role = 'BUYER';
+      let mode = 'signup';
+
+      if (req.query.state) {
+        try {
+          const state = JSON.parse(
+            Buffer.from(req.query.state as string, 'base64').toString(),
+          );
+          role = state.role || 'BUYER';
+          mode = state.mode || 'signup';
+        } catch {
+          // Use defaults if state parsing fails
+        }
+      }
+
+      const result = await this.authService.oAuthLogin(req.user as any, mode);
+
+      if (result.needsSignup) {
+        // User doesn't exist - redirect to complete signup with Google data
+        const googleData = encodeURIComponent(
+          JSON.stringify({
+            email: req.user.email,
+            name: req.user.name,
+            picture: req.user.picture,
+          }),
+        );
+        res.redirect(
+          `${frontendUrl}/google?mode=signup&role=${role}&googleData=${googleData}`,
+        );
+      } else if (result.accountNotFound && mode === 'login') {
+        // Trying to login but account doesn't exist
+        res.redirect(
+          `${frontendUrl}/google?error=account_not_found&email=${encodeURIComponent(req.user.email)}`,
+        );
+      } else {
+        // Existing user - login successful
+        res.redirect(
+          `${frontendUrl}/google?token=${result.accessToken}&refresh=${result.refreshToken}&role=${result.user?.role || 'BUYER'}`,
+        );
+      }
+    } catch (error) {
+      console.error('Google OAuth callback error:', error);
+      res.redirect(`${frontendUrl}/google?error=oauth_failed`);
+    }
+  }
+
+  /**
+   * Complete Google signup with additional details (state, city, role)
+   */
+  @Post('google/complete-signup')
+  async completeGoogleSignup(
+    @Body()
+    body: {
+      email: string;
+      name: string;
+      picture?: string;
+      role: 'BUYER' | 'VENDOR';
+      state: string;
+      city?: string;
+    },
+  ) {
+    return this.authService.completeGoogleSignup(body);
+  }
+
+  /**
+   * Check if an email exists (for Google login flow)
+   */
+  @Post('check-email')
+  async checkEmail(@Body('email') email: string) {
+    return this.authService.checkEmailExists(email);
   }
 
   @ApiBearerAuth()

@@ -321,35 +321,39 @@ export class AuthService {
     return { message: 'Password reset successful' };
   }
 
-  async oAuthLogin(user: { email: string; name: string }) {
+  async oAuthLogin(
+    user: { email: string; name: string; picture?: string },
+    mode: string = 'signup',
+  ): Promise<{
+    accessToken?: string;
+    refreshToken?: string;
+    user?: { id: string; role: string; email: string; name: string };
+    needsSignup?: boolean;
+    accountNotFound?: boolean;
+  }> {
     if (!user) {
       throw new Error('User not found');
     }
 
-    let dbUser = await this.prisma.user.findUnique({
+    const dbUser = await this.prisma.user.findUnique({
       where: { email: user.email },
     });
 
-    if (!dbUser) {
-      // Generate a random secure password for OAuth users
-      // This prevents password login for OAuth-only accounts
-      const randomPassword = crypto.randomBytes(32).toString('hex');
-      const hashedPassword = await bcrypt.hash(randomPassword, 10);
+    // If mode is 'login' and user doesn't exist, return error
+    if (mode === 'login' && !dbUser) {
+      return { accountNotFound: true };
+    }
 
-      dbUser = await this.prisma.user.create({
-        data: {
-          email: user.email,
-          name: user.name,
-          phone: '0000000000',
-          role: (user as any)?.role ?? 'BUYER',
-          password: hashedPassword, // Secure random password instead of empty
-          isVerified: true,
-        },
-      });
-    } else if (dbUser.isVerified !== true) {
+    // If user doesn't exist, they need to complete signup
+    if (!dbUser) {
+      return { needsSignup: true };
+    }
+
+    // User exists - generate tokens and login
+    if (dbUser.isVerified !== true) {
       await this.prisma.user.update({
         where: { id: dbUser.id },
-        data: { verificationStatus: 'VERIFIED' },
+        data: { isVerified: true },
       });
     }
 
@@ -360,7 +364,111 @@ export class AuthService {
     };
     const { accessToken, refreshToken } = this.generateTokens(payload);
     await this.saveRefreshToken(dbUser.id, refreshToken);
-    return { accessToken, refreshToken };
+
+    return {
+      accessToken,
+      refreshToken,
+      user: {
+        id: dbUser.id,
+        role: dbUser.role,
+        email: dbUser.email,
+        name: dbUser.name || user.name,
+      },
+    };
+  }
+
+  /**
+   * Complete Google signup with state/city information
+   */
+  async completeGoogleSignup(data: {
+    email: string;
+    name: string;
+    picture?: string;
+    role: 'BUYER' | 'VENDOR';
+    state: string;
+    city?: string;
+  }) {
+    // Check if user already exists
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email: data.email },
+    });
+
+    if (existingUser) {
+      throw new ConflictException('Email already registered');
+    }
+
+    // Generate a random secure password for OAuth users
+    const randomPassword = crypto.randomBytes(32).toString('hex');
+    const hashedPassword = await bcrypt.hash(randomPassword, 10);
+
+    // Create the user with all details
+    const user = await this.prisma.user.create({
+      data: {
+        email: data.email,
+        name: data.name,
+        phone: '0000000000', // Placeholder for Google signups
+        role: data.role,
+        password: hashedPassword,
+        isVerified: true,
+        state: data.state,
+        country: 'Nigeria',
+        city: data.city,
+        avatarUrl: data.picture,
+      },
+    });
+
+    const payload = {
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+    };
+    const { accessToken, refreshToken } = this.generateTokens(payload);
+    await this.saveRefreshToken(user.id, refreshToken);
+
+    // Send welcome notification
+    this.notificationsService
+      .sendWelcomeNotification({
+        id: user.id,
+        email: user.email,
+        name: user.name || 'User',
+        role: user.role,
+      })
+      .catch((err) =>
+        console.error('Failed to send welcome notification:', err),
+      );
+
+    return {
+      accessToken,
+      refreshToken,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        state: user.state,
+        country: user.country,
+      },
+      // Vendors need to go to verification after signup
+      redirectTo:
+        data.role === 'VENDOR' ? '/vendor/verification' : '/buyer/marketplace',
+    };
+  }
+
+  /**
+   * Check if an email already exists
+   */
+  async checkEmailExists(
+    email: string,
+  ): Promise<{ exists: boolean; role?: string }> {
+    const user = await this.prisma.user.findUnique({
+      where: { email },
+      select: { role: true },
+    });
+
+    return {
+      exists: !!user,
+      role: user?.role,
+    };
   }
 
   async getProfile(userId: string) {
