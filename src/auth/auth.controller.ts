@@ -97,7 +97,10 @@ export class AuthController {
 
     try {
       // Check if user exists
-      const result = await this.authService.oAuthLogin(req.user as any, 'check');
+      const result = await this.authService.oAuthLogin(
+        req.user as any,
+        'check',
+      );
 
       if (result.needsSignup) {
         // User doesn't exist - redirect to complete signup with Google data
