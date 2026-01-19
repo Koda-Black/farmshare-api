@@ -77,9 +77,8 @@ export class AuthController {
    */
   @Get('google')
   @UseGuards(GoogleOauthGuard)
-  async googleAuth(@Query('role') role?: string, @Query('mode') mode?: string) {
+  async googleAuth() {
     // The guard handles the redirect to Google
-    // role and mode are passed through OAuth state
   }
 
   @Get('google/callback')
@@ -88,7 +87,6 @@ export class AuthController {
     @Req()
     req: Request & {
       user: { email: string; name: string; picture?: string };
-      query: { state?: string };
     },
     @Res() res: Response,
   ) {
@@ -98,23 +96,11 @@ export class AuthController {
       'http://localhost:3000';
 
     try {
-      // Parse state from OAuth (contains role and mode)
-      let role = 'BUYER';
-      let mode = 'signup';
-
-      if (req.query.state) {
-        try {
-          const state = JSON.parse(
-            Buffer.from(req.query.state as string, 'base64').toString(),
-          );
-          role = state.role || 'BUYER';
-          mode = state.mode || 'signup';
-        } catch {
-          // Use defaults if state parsing fails
-        }
-      }
-
-      const result = await this.authService.oAuthLogin(req.user as any, mode);
+      // Check if user exists
+      const result = await this.authService.oAuthLogin(
+        req.user as any,
+        'check',
+      );
 
       if (result.needsSignup) {
         // User doesn't exist - redirect to complete signup with Google data
@@ -126,12 +112,7 @@ export class AuthController {
           }),
         );
         res.redirect(
-          `${frontendUrl}/google?mode=signup&role=${role}&googleData=${googleData}`,
-        );
-      } else if (result.accountNotFound && mode === 'login') {
-        // Trying to login but account doesn't exist
-        res.redirect(
-          `${frontendUrl}/google?error=account_not_found&email=${encodeURIComponent(req.user.email)}`,
+          `${frontendUrl}/google?mode=signup&googleData=${googleData}`,
         );
       } else {
         // Existing user - login successful
